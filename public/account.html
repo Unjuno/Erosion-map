@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101820">
+  <title>パスキーと投稿 — EROSION MAP</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./account.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="identity" href="./"><span class="identity-mark" aria-hidden="true">◈</span>
+        <span><strong>EROSION MAP</strong><small>ONE CHARACTER A DAY</small></span></a>
+      <nav class="top-links"><a href="./">MAP</a><a href="./account.html">PASSKEY / POST</a>
+        <a href="https://github.com/Unjuno/Erosion-map" target="_blank" rel="noopener noreferrer">SOURCE ↗</a></nav>
+    </header>
+    <main class="account-main">
+      <div class="eyebrow"><span class="small-line"></span> IDENTITY & CONTRIBUTION</div>
+      <h1>あなたの一文字を、<br><em>世界へ。</em></h1>
+      <p class="account-intro">メールアドレスもパスワードも不要。端末のパスキーで登録・ログインし、1日1文字を投稿します。同じ日の再投稿は更新になります。</p>
+      <div class="hero-notice" role="note" id="environmentNotice">
+        このページは開発用バックエンドへの接続が必要です。静的デモでは登録・投稿できません。
+      </div>
+      <div class="account-grid">
+        <section class="side-card">
+          <div class="side-heading"><span>01 / PASSKEY</span><span class="side-mini">WEB AUTHENTICATION</span></div>
+          <h2>パスキー認証</h2>
+          <p>認証にはWebAuthnを使用します。対応端末で登録・ログインしてください。</p>
+          <div class="account-actions">
+            <button id="registerButton" type="button">新規登録 / パスキー追加</button>
+            <button id="loginButton" type="button" class="secondary">パスキーでログイン</button>
+            <button id="logoutButton" type="button" class="secondary">ログアウト</button>
+          </div>
+          <div class="account-state"><span>認証状態</span><strong id="authState">確認中</strong></div>
+          <div class="account-state"><span>登録パスキー数</span><strong id="keyCount">—</strong></div>
+          <p id="authMessage" class="account-feedback" role="status"></p>
+        </section>
+        <section class="side-card">
+          <div class="side-heading"><span>02 / POST</span><span class="side-mini">ONCE A DAY</span></div>
+          <h2>1文字を投稿</h2>
+          <form id="realPostForm" class="post-form">
+            <label for="realChar">文字 <span>Unicodeの1書記素</span></label>
+            <input id="realChar" name="char" required maxlength="32" value="文">
+            <div class="field-pair">
+              <div><label for="realX">X座標</label><input id="realX" name="x" type="number" required step="1" value="0"></div>
+              <div><label for="realY">Y座標</label><input id="realY" name="y" type="number" required step="1" value="0"></div>
+            </div>
+            <button id="realSubmit" type="submit" class="submit-preview">この日の投稿を保存 →</button>
+          </form>
+          <p id="postMessage" class="account-feedback" role="status"></p>
+          <div class="account-state"><span>投稿対象日 (JST)</span><strong id="postingDay">—</strong></div>
+          <div class="account-state"><span>同日の現行投稿</span><strong id="currentPost">—</strong></div>
+        </section>
+      </div>
+      <p class="account-warning">本ページはWebAuthnの開発用実装です。公開環境ではドメイン・HTTPS・DB・バックアップ・負荷制限・アカウント復旧の運用検証が必要です。すべてのパスキーを失うと復旧できない可能性があります。</p>
+    </main>
+    <footer><span>EROSION MAP / PASSKEY</span><a href="./">← マップへ戻る</a></footer>
+  </div>
+  <script type="module" src="./account.js"></script>
+</body>
+</html>

@@ -54,3 +54,20 @@ docs/HANDOFF.md       ChatGPT Work引継ぎ資料
 [Issue #1](https://github.com/Unjuno/Erosion-map/issues/1) / [Issue #2](https://github.com/Unjuno/Erosion-map/issues/2)
 
 公開リポジトリであっても、秘密鍵・パスキー秘密情報・投稿者の個人情報・接続文字列は絶対に置かないこと。ライセンスは未設定です。
+
+
+## 開発用のパスキー + SQLite API
+
+バックエンドを伴うローカルテストでは以下を使用します。
+
+```bash
+npm install
+npm run dev:full   # http://localhost:4173/account.html
+npm run job        # 日本時間で締まった日付のstateをDBへ確定
+```
+
+`/account.html` はメール不要のWebAuthn登録・ログイン・投稿を試す画面です。新規登録・追加登録時には対応端末のパスキーが必要です。`/api/me`・`/api/post`・`/api/state`・`/api/history` を実装しています。日付ごとの確定は開発用ジョブを手動で起動してください。公開ホスティングへの反映はしていません。
+
+**本番利用不可**: `server/store.mjs` はNode 22の実験的`node:sqlite` に依存し、単一インスタンス前提です。大規模同時アクセス、複数インスタンス、サーバーレス上の永続性は未検証です。WebAuthn端末実機でのエンドツーエンド検証、HTTPSドメイン・デプロイ・CSRF/DoS・バックアップ・復旧設計が必要です。現段階では個人データを登録して公開運用しないでください。
+
+参照: [SimpleWebAuthn server](https://simplewebauthn.dev/docs/packages/server)。

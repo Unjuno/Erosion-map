@@ -49,3 +49,13 @@ npm run dev
 - ジョブ冪等性: 同じ入力の重複起動で同一stateハッシュを保証。
 - WebAuthn: 不正署名、origin/RP ID不一致、期限切れchallengeをすべて拒否。
 - UI: 500×500表示、1px以下へのズーム、履歴再生、キーボード操作を確認。
+
+
+## 追加実装（SQLite + WebAuthn開発API）
+
+- `server/store.mjs`: Node 22 `node:sqlite` （experimental）によるユーザー・公開鍵・セッション・投稿・日次state永続化。開発用途のみ。
+- `server/http.mjs`: @simplewebauthn/server 14.0.3を使った登録・ログイン・複数パスキー追加、署名/Challenge/Origin/RP検証、投稿API。
+- `public/account.html`: ブラウザ認証・投稿の開発画面。静的デモではAPIがないため非対応。
+- `npm run dev:full`: ローカルの認証APIつきサイト起動、`npm run job`: 締切済み日付をDBへ確定。
+- シミュレーション表示のメイン画面は、まだローカルデモデータ固定。本番公開DBとの閲覧API統合が必要。
+- パスキー端末の実機認証テストは手動で要実施。HTTPテストはオプション発行・不正挑戦の拒否を検査するが実機フローの正当性を保証しない。
