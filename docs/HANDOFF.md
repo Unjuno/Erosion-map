@@ -1,93 +1,83 @@
-# ChatGPT Workへの引継ぎ — Erosion Map
+# ChatGPT Workへの引き継ぎ — Erosion Map
 
-## 主な目的
+最終整備日: 2026-10-21（JST）
+GitHub: https://github.com/Unjuno/Erosion-map
+CI: https://github.com/Unjuno/Erosion-map/actions
 
-1日1回、パスキーで認証したユーザーが座標と1文字を投稿。同じ日なら再編集可。日付ごとの侵食・相殺の状態を保存し、500×500から拡張される世界を閲覧・再生する。
+## ゴール
 
-ソース: https://github.com/Unjuno/Erosion-map
-ソースはPublic。本番サイト・ログイン・投稿データはまだ公開していない。
+1人1日1回、パスキー（WebAuthn）のみでログインして座標と1文字を投稿する。同日中は修正でき、最終投稿だけ有効。翌日の受け取り側主体の侵食と衝突を計算し、履歴・ランキング・静的マップを公開する。初期500×500マス、登録人数に応じて拡張。メール認証・パスワードは用いない。
 
-## 現時点で動くもの
+**デプロイ方針**: ユーザー希望はGPT Sites内での構築・DB・公開の完結。ただしGPT Sitesの利用可能なDB仕様、サーバーアクション、定期ジョブ、WebAuthnサポートは未確認。まず実際の提供機能を確認し、互換でない場合はユーザーへ相違点を提示すること。公開GitHubはソース管理であってサイトの実行環境ではない。
 
-- Node.js 22 / TypeScript 5.8.3。`npm test` で純粋な計算と静的画面のビルドを検証。
-- `npm run dev` でローカルデモを表示（永続データは扱わない）。
-- `src/engine.ts`、`src/daily.ts`、`src/calendar.ts` は副作用のない関数。
-- `public/` にCanvas画面、マス選択・ランキング・時系列再生・投稿プレビュー。
-- `npm run build:site` で `site/` に静的ファイル生成。GPT Sitesへの取り込み方式は要確認。
+## 稼働している部分（ローカル開発用）
 
-## 本番化するための必須作業（優先順）
+| 機能 | 実装場所 | 動作 |
+|---|---|---|
+| 侵食・衝突 | src/engine.ts | 決定的1日1世代、純関数。暫定規則あり |
+| 日付と投稿 | src/calendar.ts / src/daily.ts | JST基準の投稿日、最終revisionを選択 |
+| SQLite | server/store.mjs | ユーザー、公開鍵、チャレンジ、セッション、投稿、公開state |
+| WebAuthn | server/http.mjs | 署名・Origin・RP ID・userHandle・チャレンジの検証 |
+| UI | public/index.html + app.js | 500×500 Canvas、履歴、仮投稿。API公開履歴へ切替可能 |
+| パスキー投稿UI | public/account.html + account.js | 本番APIではなく開発APIへ接続 |
+| ランキング | public/ranking.html + ranking.js | 公開API→静的ファイル→合成デモの順で取得 |
+| 案内 | public/policy.html | 開発版説明のみ、正式法的ポリシーではない |
+| 日次ジョブ | scripts/daily-job.mjs / run-server.mjs | ローカル単一ノードで日付を順次確定 |
+| 静的配布 | scripts/export-states.mjs | 公開stateだけをSHA-256照合して出力 |
+| CI | .github/workflows/ci.yml | Node.js 22、npm test |
 
-1. **仕様確定**: `docs/ALGORITHM.md` とIssue #1/#2。N=1が拡大しない問題と3勢力相殺・同文字合算等をユーザーと確定。
-2. **本番DBの実装**: users、passkey_credentials、session、posts（変更履歴）、daily_snapshots。PK/FK、一意制約、ACL、インデックスを指定する。GPT Sitesの実際のDB機能に合わせる。
-3. **パスキーWebAuthn**: 登録とログインのchallenge、RP ID/origin、署名・user verification・challengeの検証、counterと失効、複数パスキー、セッションCookie。サーバー側の検証を必須とする。メールは原則使わない。
-4. **投稿API**: 認証済みユーザーID、現在のAsia/Tokyoの日付、文字と座標のサーバー側バリデーション、同日revisionを原子的に採番、レート制限とCSRF対策。
-5. **日次バッチ**: 1日1回のサーバー実行（ジョブ重複排除）、投稿締切、DBの整合スナップショット、日次状態のimmutable保存、再実行時は同一結果照合、エラー通知。
-6. **本番マップ接続**: 閲覧専用の公開APIで日付別stateとランキングを取得。private credentialsなどを含めない。部分読み込み・圧縮・キャッシュ。
-7. **運用と配信**: 公開ドメイン、HTTPS、CSP、Cookie制限、広告/プライバシー、監査・バックアップ・障害復旧・負荷テスト。
+## ローカルで再現する手順
 
-## 特に重要な注意
-
-- このデモの「投稿を試す」は認証もDB保存も行わない。これを本番投稿として使ってはいけない。
-- 通常N=1では広がらない。デモ初期勢力や選択可能な強さN>1は「侵食の見え方」を検証するためで、ゲームルールの変更を承認した意味ではない。
-- ローカルの静的サイトは公開環境で安全にユーザー認証を受け付けられない。
-- `resolveCollision` は同文字合算、最大勢力と他勢力総和との差分による暫定実装。本仕様の「順次相殺」と異なる可能性がある。
-- GPT Sitesに必要なバックエンドAPI、DB、WebAuthn、ジョブがあるか必ず調査してから技術を確定する。
-- GitHubに個人情報・秘密情報を投入しない。公開前にライセンス・規約・プライバシーポリシーを確認する。
-
-## 動作再現
-
-```bash
+\`\`\`bash
 npm install
 npm test
-npm run dev
-```
+npm run dev          # http://127.0.0.1:4173 （静的デモのみ）
+npm run dev:full     # http://localhost:4173 （開発用SQLite + WebAuthn）
+npm run job          # 開発DBの締切済み日を確定
+npm run export:states
+\`\`\`
 
-## 次の検証の例
+Node.js 22以上、TypeScript 5.8.3、SimpleWebAuthn 14.0.3。
+\`node:sqlite\` は実験的で、サーバーレス・複数ノードでの本番利用を保証しない。
+CIの成功は単体・模擬署名の成功であり、実機パスキー・実際の公開環境の保証ではない。
 
-- データ整合性: 同一(user,day)の最後のrevisionのみ確定。
-- DB競合: 同時POST100回を負荷試験し、revision番号の一意性を検証。
-- ジョブ冪等性: 同じ入力の重複起動で同一stateハッシュを保証。
-- WebAuthn: 不正署名、origin/RP ID不一致、期限切れchallengeをすべて拒否。
-- UI: 500×500表示、1px以下へのズーム、履歴再生、キーボード操作を確認。
+### 実施済みの主要テスト
 
+- 2勢力・3勢力の相殺、同文字合算、包囲、同期更新、入力順不変。
+- Unicode 1書記素、日付妥当性、カレンダー境界（Asia/Tokyo）。
+- 一日一件の最終revision、原子的な更新、複数SQLite接続からの順序一貫性。
+- 完了済みスナップショットの不変性と再実行時の冪等性。
+- 加算型侵食で安全整数の上限を超えた際のDBロールバック。
+- 仮想P-256署名器によるWebAuthn正常登録・ログイン・再ログイン・投稿。
+- 偽署名、偽Origin、userHandle不一致、チャレンジ再利用の拒否。
+- 公開JSONのsha256照合および認証用データ非混入。
+- 静的ビルド、既定ルート /・/submit・/ranking・/policy。
 
-## 追加実装（SQLite + WebAuthn開発API）
+## 今すぐ解決すべき設計判断（未承認）
 
-- `server/store.mjs`: Node 22 `node:sqlite` （experimental）によるユーザー・公開鍵・セッション・投稿・日次state永続化。開発用途のみ。
-- `server/http.mjs`: @simplewebauthn/server 14.0.3を使った登録・ログイン・複数パスキー追加、署名/Challenge/Origin/RP検証、投稿API。
-- `public/account.html`: ブラウザ認証・投稿の開発画面。静的デモではAPIがないため非対応。
-- `npm run dev:full`: ローカルの認証APIつきサイト起動、`npm run job`: 締切済み日付をDBへ確定。
-- シミュレーション表示のメイン画面は、まだローカルデモデータ固定。本番公開DBとの閲覧API統合が必要。
-- パスキー端末の実機認証テストは手動で要実施。HTTPテストはオプション発行・不正挑戦の拒否を検査するが実機フローの正当性を保証しない。
+1. https://github.com/Unjuno/Erosion-map/issues/1 — 通常投稿N=1では隣への影響が0。初期値または伝播規則の承認が必要。
+2. https://github.com/Unjuno/Erosion-map/issues/2 — 3勢力以上の順次相殺は不定、同文字合算・現住者防御・同期1世代・包囲保持は暫定。
+3. https://github.com/Unjuno/Erosion-map/issues/3 — 単一文字の初期N3から52日目に安全整数オーバーフロー。合算方式／上限／減衰／BigIntを決め、365日以上の検証を要求。
 
+**これらを無断で変更しないこと。** 現在の計算結果は正式ゲーム仕様の承認を意味しない。
 
-## ブロッカー: 長期増幅
+## Workで優先して実施する作業
 
-https://github.com/Unjuno/Erosion-map/issues/3 の実測により、暫定同文字合算ルールは単一N3から52日後に安全整数を超える。長期運用する日次ジョブを有効にする前に、合算方式・上限・減衰・BigIntなどの選択を正式決定し、最低365日の回帰試験を行うこと。
+1. GPT Sites環境の**実際の**機能（DB、サーバー側処理、独自ドメイン、WebAuthn、スケジューラ、ファイル出力）を調査。
+2. 上記Issueを決定表・例・365日回帰テストで解決し、ゲームルールの版を固定。
+3. 本番向けDBスキーマに移植。 \`users\` / \`passkeys\` / \`challenges\` / \`sessions\` / \`posts\` / \`day_config\` / \`snapshots\`。個人情報領域と公開stateを分離。
+4. 正式ドメインのHTTPS、WebAuthn RP ID/Origin、Cookie、セッション失効、端末実機での認証・復旧を検証。
+5. 投稿締切、日次ジョブの排他・失敗復旧・再実行時ハッシュ照合、複数ノード競合、バックアップを実装・テスト。
+6. UIの公開state同期、CDNキャッシュ、圧縮、マップ描画、スマートフォン、アクセシビリティ、異常時の表示を検証。
+7. 規約、プライバシーポリシー、事業者連絡先、保持・削除ポリシー、広告の可否を決定してから一般公開。
+8. 本番公開後に監視・運用手順、復旧テスト、負荷・侵入テストを実施。
 
+## 安全性に関する境界
 
-## 公開用の状態ファイル
-
-`npm run export:states` は非公開DBから、公開されてもよいスナップショットのみを `site/data/state-YYYY-MM-DD.json`、`site/data/index.json`、`site/data.js` に書き出す。ユーザー認証や投稿のDBはエクスポートしない。GPT Sitesへファイルを運ぶ場合はこの出力を候補にできるが、日次計算の自動実行と安全な配信は別途構築が必要。
-
-
-## エクスポートの完全性
-
-`scripts/export-states.mjs` では各公開JSONを厳密にSHA-256照合し、`site/data/index.json` に**保存ファイルの正確なバイト列**に対するダイジェストを記録する。照合できない場合はエクスポートを中断する。Work側でのCDNアップロード時はアーカイブの原子性と世代切替が別途必要。
-
-
-## ランキング画面
-
-`public/ranking.html` は公開API、静的エクスポート、合成デモの順に取得先を選びます。3指標は最新日の支配マス数、最新日のN合計、読み込んだ直近30スナップショットに出現した日数。連続生存期間の正式仕様と混同しないこと。
-
-## 個人情報と運用ポリシー
-
-`public/policy.html` は現行コードの取り扱いを説明する**開発版ドラフト**であり、本番の法的通知ではない。運営主体、問い合わせ窓口、保持・削除・復旧・広告・法令遵守を決めてから正式化する。
-
-## 既定の4ページルート
-
-ローカルHTTPサーバーは `/`、`/submit`、`/ranking`、`/policy` を公開する。静的配信の場合は `.html` を使うかRewriteを設定。GPT Sites対応は未確認。
-
-## WebAuthn認証の検証追加
-
-開発APIは登録・ログインの署名に加えて、存在する場合のuserHandleがcredential IDに結び付く内部ユーザーと一致することも検査する。パスキーの複数登録、署名不正、RP Origin不一致、再送拒否を自動テストで確認したが、実機と本番ドメインでの検証は未完了。
+- \`npm run dev\` は純粋な公開デモ。投稿フォームはローカル画面上のプレビューで、DB保存しない。
+- \`npm run dev:full\` は**開発用バックエンド**。暗号的な模擬認証テストを通しても公開サービスとして安全とは限らない。
+- パスキーの秘密鍵と生体認証情報を保存しない。DBの公開鍵やセッション情報も公開JSONには出さない。
+- SQLite DB、\`.env\`、Cookieの生値・秘密情報はGitHubへ置かない。
+- バックエンドにはメモリ内IPレート制限があるが、分散環境・持続DoS対策ではない。
+- \`/policy\` は運営主体・連絡先・保持期間が未確定の開発版案内。合法的な本番ポリシーではない。
+- GitHub公開リポジトリはソース公開であり、ライセンス未設定。実サービス公開と同義ではない。

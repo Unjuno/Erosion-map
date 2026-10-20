@@ -1,89 +1,85 @@
 # EROSION MAP — 1日1文字 侵食マップシステム
 
-ユーザーが1日1文字を投稿し、上下左右からの影響を**受け取る側のマス**が比較して支配者を決める、日次マップシミュレーション。
+[公開ソース](https://github.com/Unjuno/Erosion-map) · [自動テスト](https://github.com/Unjuno/Erosion-map/actions) · [Work引き継ぎ](docs/HANDOFF.md) · [アルゴリズム仕様](docs/ALGORITHM.md)
 
-> **現状: 静的な操作可能デモ + 純粋な日次計算エンジン。**
-> サイト公開、パスキー認証、本番DB、永続投稿API、日次ジョブは**未実装**です。
-> いまの「投稿を試す」はブラウザ内プレビューのみで、保存されません。
+パスキーでログインしたユーザーが1日1文字を座標指定で投稿し、**受け取り側のマス**が上下左右からの影響を受けて文字と勢力値を更新する日次シミュレーション。
 
-## 実装済み
+> **開発ステータス：ローカル試作版／本番未公開**
+> 侵食エンジン、UI、開発用SQLite保存、WebAuthn APIは実装されていますが、
+> **GPT Sitesへのデプロイ・本番DB・端末実機確認・運用監査は未完了**です。
+> アルゴリズムの未承認規則と長期オーバーフローが残るため、本番投稿受付は禁止です。
 
-- 500×500マス（各軸-250..249）、拡大縮小、ドラッグ、座標移動、マス選択
-- 13日分のデモ履歴、再生・停止・速度調整、ランキング
-- 受動型の同期式侵食エンジン、衝突・相殺・包囲
-- 日次投稿の最終revision選択、投稿衝突、イベントN、日付チェック（日本時間）
-- Node.js自動テストとGitHub Actions CI
-- HTML/CSS/JavaScriptの静的サイト書き出し
+## 実装済みの機能
 
-## 動作方法
+| 項目 | 状態・制限 |
+|---|---|
+| 500×500のCanvas表示 | ズーム、ドラッグ、座標移動、マス選択 |
+| デモマップ | 13日の合成履歴、再生速度、ランキング、仮投稿（保存なし） |
+| 侵食・衝突 | TypeScriptによる決定的な一日一世代の計算。複数ルールは暫定 |
+| 投稿データ処理 | 1ユーザー1日1件、同日更新でrevisionを加算 |
+| 日次状態 | 日本時間、トランザクション、日付順、重複実行の冪等化 |
+| SQLite | Node.js単一ノード用の開発アダプター、実験的APIに依存 |
+| WebAuthn | メール・パスワード不要の登録、追加、ログイン、ログアウト。実機検証は未 |
+| 公開履歴 | 認証情報を除くJSON静的出力。SHA-256照合 |
+| ランキング | 最新マス数、N合計、読み込んだ直近30日の出現日数 |
+| 情報の取り扱いページ | 開発版案内のみ。正式な規約・プライバシーポリシーではない |
 
-必要な環境: Node.js **22以上**、npm。TypeScript 5.8.3で検証します。
+## 起動
 
-```bash
+**Node.js 22以上、npm** が必要です。TypeScript 5.8.3、
+\`@simplewebauthn/server\` 14.0.3、Node標準の実験的 \`node:sqlite\` を使用します。
+
+\`\`\`bash
 npm install
-npm test            # エンジン＋日次生成＋サイトのテスト
-npm run dev         # http://127.0.0.1:4173
-npm run build:site  # site/ に配信可能な静的ファイルを生成
-```
+npm test             # build + static asset test + engine/DB/API/WebAuthn tests
+npm run dev          # http://127.0.0.1:4173 （静的デモのみ）
+npm run dev:full     # http://localhost:4173 （開発用API + SQLite + パスキー）
+npm run job          # JSTで締切済みの日のsnapshotを確定
+npm run export:states # site/data/state-YYYY-MM-DD.json 等に公開状態を出力
+\`\`\`
 
-`site/` はデモ表示専用です。実際のユーザー投稿、パスキー認証、DBは含みません。
-ビルド結果を配信するときは静的ホストがJavaScriptモジュールを配信できる必要があります。
+\`npm run dev:full\` はローカル開発サーバーです。起動中は1時間ごとに締切済み日付を確認します。
+最初の起動で開発用SQLiteファイルが作られ、ログイン・投稿フォームは
+\`http://localhost:4173/submit\` にあります。データを公開サービスに移行する前に
+保存形式、バックアップ、削除フローを決定してください。
 
-## 構成
+## ページ
 
-```text
-src/engine.ts         1世代の侵食・衝突、スナップショット
-src/daily.ts          投稿の最終版選択と日次state生成
-src/calendar.ts       ISO日付・Asia/Tokyoの日付判定
-public/               操作可能なブラウザ画面（Canvas）
-scripts/build-site.mjs  HTML/JS静的ファイルの組み立て
-scripts/serve.mjs       ローカルプレビューサーバー（127.0.0.1のみ）
-tests/                自動テスト
-docs/ALGORITHM.md     計算式、仕様確定点・暫定点
-docs/DAILY-PIPELINE.md 日次処理の契約と実装外の責務
-docs/HANDOFF.md       ChatGPT Work引継ぎ資料
-```
+- \`/\` — 侵食マップと履歴再生。利用できれば公開DBの履歴へ切替可能。
+- \`/submit\` — パスキー登録・ログイン・投稿（開発用バックエンドが必要）。
+- \`/ranking\` — 勢力ランキング。公開JSONがなければ合成デモで表示。
+- \`/policy\` — **未発効**の開発用データ取り扱い案内。
 
-## 正式仕様決定待ち
+静的書き出しには \`index.html\`、\`account.html\`、\`ranking.html\`、
+\`policy.html\` を含みます。拡張子なしURLはローカルHTTPサーバーが提供する
+ルートであり、静的ホストにはRewrite設定が必要な場合があります。
 
-1. **通常投稿N=1は現在の影響計算(N-1)では広がりません。**
-2. 三勢力以上の相殺方式、同じ文字の加算、既存勢力の防御、包囲処理は暫定です。
-3. 1日をいつ締め切りどの時点で投稿を固定するか、DBトランザクションの設計が必要です。
-4. 最終的なGPT SitesのDB・定期実行・パスキー対応状況は未確認です。
+## リポジトリ構成
 
-[Issue #1](https://github.com/Unjuno/Erosion-map/issues/1) / [Issue #2](https://github.com/Unjuno/Erosion-map/issues/2)
+\`\`\`text
+src/                  侵食エンジン・投稿整合性・日付計算
+server/               開発用 SQLite ストア、パスキーHTTP API
+public/               Canvas・投稿・ランキング・ポリシー画面
+scripts/              静的ビルド、ローカルサーバー、日次処理、公開JSON出力
+tests/                ユニット、DB接続、署名付き仮想認証器、公開データ検証
+docs/                 仕様・日次処理・Workへの引き継ぎ
+.github/workflows/ci.yml  GitHub Actions
+\`\`\`
 
-公開リポジトリであっても、秘密鍵・パスキー秘密情報・投稿者の個人情報・接続文字列は絶対に置かないこと。ライセンスは未設定です。
+## リリースを止めている問題
 
+- [#1](https://github.com/Unjuno/Erosion-map/issues/1): **通常投稿N=1はN−1=0となり、侵食が始まらない。**
+- [#2](https://github.com/Unjuno/Erosion-map/issues/2): **多勢力の相殺、同文字合算、現住者防御、同期更新を正式決定する。**
+- [#3](https://github.com/Unjuno/Erosion-map/issues/3): **同文字合算によりNが指数的に増幅し、単一N3から52日目に安全整数を超える。**
 
-## 開発用のパスキー + SQLite API
+未確定ルールは本番仕様ではなく、試作の挙動として明記しています。
+本番化前には最低365日分の検証と、目標環境の機能調査が必要です。
 
-バックエンドを伴うローカルテストでは以下を使用します。
+## セキュリティ
 
-```bash
-npm install
-npm run dev:full   # http://localhost:4173/account.html
-npm run job        # 日本時間で締まった日付のstateをDBへ確定
-```
+公開リポジトリにユーザーの個人情報・認証用の秘密情報・SQLiteファイル・接続文字列をコミットしないでください。
+パスキーの秘密鍵はサーバーでは扱いません。開発HTTPサーバーのCSRF防御、
+IP単位の簡易レート制限、Cookieは本番環境での安全性を保証しません。
+GPT Sitesの内蔵DB・WebAuthn・定期実行に関する実際の提供状況は未検証です。
 
-`/account.html` はメール不要のWebAuthn登録・ログイン・投稿を試す画面です。新規登録・追加登録時には対応端末のパスキーが必要です。`/api/me`・`/api/post`・`/api/state`・`/api/history` を実装しています。日付ごとの確定は開発用ジョブを手動で起動してください。公開ホスティングへの反映はしていません。
-
-**本番利用不可**: `server/store.mjs` はNode 22の実験的`node:sqlite` に依存し、単一インスタンス前提です。大規模同時アクセス、複数インスタンス、サーバーレス上の永続性は未検証です。WebAuthn端末実機でのエンドツーエンド検証、HTTPSドメイン・デプロイ・CSRF/DoS・バックアップ・復旧設計が必要です。現段階では個人データを登録して公開運用しないでください。
-
-参照: [SimpleWebAuthn server](https://simplewebauthn.dev/docs/packages/server)。
-
-
-## 公開履歴の静的書き出し
-
-```bash
-npm run export:states
-```
-
-永続DBから公開済みのスナップショットだけを `site/data/state-YYYY-MM-DD.json` と `site/data/index.json`、最新の `site/data.js` に書き出します。ユーザーID・パスキー公開鍵・セッション・投稿編集履歴はエクスポートしません。
-
-開発用バックエンド `npm run dev:full` を起動している間は1時間ごとにJST締切済みの日付を確定しようとします。実際の公開環境では永続ジョブと独立したDBを用い、公開前に排他性・バックアップを検証する必要があります。
-
-
-### 独立したランキング画面
-
-`/ranking.html` は実際の公開スナップショット（API→静的JSON）から順位を算出します。両方利用できない静的デモ環境では `public/demo-data.js` の合成データを使用します。指標は**最新日の支配マス数・N合計・直近30日の出現日数**。出現日数は連続生存期間とは異なり、正式な「生存期間」ルールは未定です。
+**ライセンスは未設定**です。公開ソースであることと自由利用ライセンスがあることは異なります。
