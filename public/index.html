@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="1日1文字、世界を侵食する。受動型侵食マップの公開開発デモ。">
+  <meta name="theme-color" content="#101820">
+  <title>EROSION MAP — 1日1文字の侵食マップ</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="identity" href="./" aria-label="Erosion Map ホーム">
+        <span class="identity-mark" aria-hidden="true">◈</span>
+        <span><strong>EROSION MAP</strong><small>ONE CHARACTER A DAY</small></span>
+      </a>
+      <nav class="top-links" aria-label="サイト内メニュー">
+        <a href="#map">MAP</a>
+        <a href="#simulation">SIMULATION</a>
+        <a href="#rules">RULES</a>
+        <a href="https://github.com/Unjuno/Erosion-map" target="_blank" rel="noopener noreferrer">SOURCE ↗</a>
+      </nav>
+      <span class="status"><span class="status-dot"></span> DEVELOPMENT PREVIEW</span>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow"><span class="small-line"></span> A WORLD WRITTEN ONE GLYPH AT A TIME</div>
+        <h1>一文字から、<br><em>世界が広がる。</em></h1>
+        <p>一日に一文字。隣り合う文字は影響を与え、衝突し、残り続ける。<br>
+          ここでは「受け取るマス」が支配者を決める侵食シミュレーションを試せます。</p>
+        <div class="hero-notice" role="note">
+          <span class="notice-icon" aria-hidden="true">i</span>
+          <span>現在は公開開発デモです。投稿プレビューはブラウザ内だけで動作し、アカウント・DBには保存されません。</span>
+        </div>
+      </section>
+
+      <section class="world-section" id="map" aria-label="侵食マップ">
+        <div class="section-kicker">
+          <span>01 / THE WORLD</span>
+          <span id="mapSize">500 × 500 GRID</span>
+        </div>
+        <div class="workspace">
+          <div class="map-panel">
+            <div class="panel-top">
+              <div>
+                <p class="panel-label">LIVE SIMULATION / LOCAL DEMO</p>
+                <h2>侵食マップ <span class="slim">/ WORLD 001</span></h2>
+              </div>
+              <div class="stats-compact" aria-live="polite">
+                <div><small>支配マス</small><strong id="occupied">0</strong></div>
+                <div><small>文字の種類</small><strong id="factionCount">0</strong></div>
+              </div>
+            </div>
+
+            <div class="map-toolbar" aria-label="マップ操作">
+              <div class="tool-group">
+                <button id="zoomOut" type="button" aria-label="縮小">−</button>
+                <button id="zoomIn" type="button" aria-label="拡大">＋</button>
+                <button id="fitMap" type="button">全域表示</button>
+              </div>
+              <form id="goForm" class="coordinate-form">
+                <label for="goX">X</label>
+                <input id="goX" name="x" type="number" value="0" step="1" required>
+                <label for="goY">Y</label>
+                <input id="goY" name="y" type="number" value="0" step="1" required>
+                <button type="submit">移動 ↗</button>
+              </form>
+            </div>
+
+            <div class="canvas-frame">
+              <canvas id="mapCanvas" tabindex="0"
+                aria-label="侵食マップ。ドラッグして移動。スクロールまたはボタンで拡大縮小。クリックでマスを選択。矢印キーでも移動可能。">
+                Canvas対応ブラウザでマップが表示されます。
+              </canvas>
+              <div class="canvas-label canvas-label-top">RECEIVER-DRIVEN EXPANSION</div>
+              <div class="canvas-label canvas-label-bottom" id="viewportLabel">CENTER: (0, 0)</div>
+              <div class="canvas-help">DRAG TO PAN · SCROLL TO ZOOM · CLICK TO INSPECT</div>
+            </div>
+
+            <div class="timeline" id="simulation">
+              <div class="timeline-header">
+                <div>
+                  <small>TIME / マップ履歴</small>
+                  <strong id="dayLabel">2026-10-01</strong>
+                </div>
+                <span id="dayCounter">DAY 01 / 13</span>
+              </div>
+              <div class="timeline-controls">
+                <button id="prevDay" type="button" aria-label="前の日">‹</button>
+                <button id="togglePlay" type="button" class="play" aria-label="再生または停止">▶ 再生</button>
+                <button id="nextDay" type="button" aria-label="次の日">›</button>
+                <input id="dayRange" aria-label="表示日付" type="range" min="0" max="12" step="1" value="0">
+                <label class="speed-label" for="speed">速度</label>
+                <select id="speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select>
+              </div>
+            </div>
+          </div>
+
+          <aside class="sidebar" aria-label="マップの詳細">
+            <section class="side-card" aria-labelledby="inspectorTitle">
+              <div class="side-heading"><span>02 / INSPECTOR</span><span class="side-mini">SELECTED CELL</span></div>
+              <h2 id="inspectorTitle">マスの状態</h2>
+              <div id="selectedGlyph" class="glyph-display">—</div>
+              <div class="detail-list">
+                <div><span>座標 / X, Y</span><strong id="selectedCoords">(0, 0)</strong></div>
+                <div><span>文字 / GLYPH</span><strong id="selectedChar">空白</strong></div>
+                <div><span>勢力値 / N</span><strong id="selectedStrength">0</strong></div>
+              </div>
+            </section>
+
+            <section class="side-card" aria-labelledby="rankingTitle">
+              <div class="side-heading"><span>03 / RANKING</span><span class="side-mini">CURRENT DAY</span></div>
+              <h2 id="rankingTitle">勢力ランキング</h2>
+              <div id="ranking" class="ranking" aria-live="polite"><p>集計中…</p></div>
+            </section>
+
+            <section class="side-card sandbox-card" aria-labelledby="sandboxTitle">
+              <div class="side-heading"><span>04 / SANDBOX</span><span class="side-mini">LOCAL ONLY</span></div>
+              <h2 id="sandboxTitle">投稿を試す</h2>
+              <p>投稿を翌日のマップへ仮配置します。本番投稿ではなく、保存もされません。</p>
+              <form id="previewForm" class="post-form">
+                <label for="postChar">文字 <span>1文字</span></label>
+                <input id="postChar" name="char" value="星" maxlength="32" autocomplete="off" required>
+                <div class="field-pair">
+                  <div><label for="postX">X座標</label><input id="postX" name="x" type="number" value="0" step="1" required></div>
+                  <div><label for="postY">Y座標</label><input id="postY" name="y" type="number" value="-8" step="1" required></div>
+                </div>
+                <label for="postN">イベント勢力値 <span>通常はN=1</span></label>
+                <select id="postN" name="n">
+                  <option value="1">N = 1 （通常投稿）</option>
+                  <option value="3" selected>N = 3 （デモイベント）</option>
+                  <option value="5">N = 5</option>
+                  <option value="7">N = 7</option>
+                </select>
+                <button class="submit-preview" type="submit">プレビューを反映 →</button>
+                <button id="resetPreview" class="text-button" type="button">デモを初期化</button>
+              </form>
+              <p id="previewMessage" class="feedback" role="status"></p>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="rule-section" id="rules">
+        <div class="section-kicker"><span>05 / SYSTEM RULES</span><span>SPECIFICATION v0.1</span></div>
+        <div class="rules-grid">
+          <article><span>01</span><h3>受け取り側が決める</h3><p>各マスが上下左右から届く影響を比較し、翌日の支配文字を決めます。</p></article>
+          <article><span>02</span><h3>衝突と相殺</h3><p>異なる文字同士は勢力値を打ち消し、残りが0なら空白になります。</p></article>
+          <article><span>03</span><h3>一日一世代</h3><p>前日の状態だけを参照して同期計算。日付ごとの変化を再現できます。</p></article>
+        </div>
+        <p class="rule-disclaimer">※ 同文字の合算・相殺順序・包囲保持などは暫定実装です。通常のN=1投稿は現在の数式では広がりません。正式な仕様決定前に、<a href="https://github.com/Unjuno/Erosion-map/blob/main/docs/ALGORITHM.md" target="_blank" rel="noopener noreferrer">アルゴリズム仕様書</a>をご確認ください。</p>
+      </section>
+    </main>
+    <footer><span>EROSION MAP © OPEN DEVELOPMENT</span><span>DESIGNED TO EVOLVE · <a href="https://github.com/Unjuno/Erosion-map">GITHUB ↗</a></span></footer>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
