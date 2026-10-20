@@ -69,3 +69,8 @@ https://github.com/Unjuno/Erosion-map/issues/3 の実測により、暫定同文
 ## 公開用の状態ファイル
 
 `npm run export:states` は非公開DBから、公開されてもよいスナップショットのみを `site/data/state-YYYY-MM-DD.json`、`site/data/index.json`、`site/data.js` に書き出す。ユーザー認証や投稿のDBはエクスポートしない。GPT Sitesへファイルを運ぶ場合はこの出力を候補にできるが、日次計算の自動実行と安全な配信は別途構築が必要。
+
+
+## エクスポートの完全性
+
+`scripts/export-states.mjs` では各公開JSONを厳密にSHA-256照合し、`site/data/index.json` に**保存ファイルの正確なバイト列**に対するダイジェストを記録する。照合できない場合はエクスポートを中断する。Work側でのCDNアップロード時はアーカイブの原子性と世代切替が別途必要。

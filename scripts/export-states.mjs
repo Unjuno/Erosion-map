@@ -3,6 +3,8 @@
  * Can be uploaded as immutable static files to a CDN after the daily job runs.
  */
 import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { assertIsoDay } from "../dist/calendar.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Store } from "../server/store.mjs";
@@ -16,11 +18,20 @@ export async function exportSnapshots(store, destination) {
   const history = [];
   let latest = null;
   for (const row of indexed) {
+    assertIsoDay(row.day);
     const found = store.snapshot(row.day);
     if (!found) throw new Error("snapshot was removed during export");
+    if (found.state.date !== row.day) {
+      throw new Error("snapshot date disagrees with database key");
+    }
     const serialized = JSON.stringify(found.state);
-    await writeFile(join(dataDir, "state-" + row.day + ".json"), serialized + "\n");
-    history.push({ date: row.day, sha256: found.sha256 });
+    const digest = createHash("sha256").update(serialized).digest("hex");
+    if (digest !== found.sha256 || digest !== row.sha256) {
+      throw new Error("snapshot integrity check failed for " + row.day);
+    }
+    // Do not add a newline: SHA-256 in the public index hashes exact file bytes.
+    await writeFile(join(dataDir, "state-" + row.day + ".json"), serialized);
+    history.push({ date: row.day, sha256: digest });
     latest = found.state;
   }
   await writeFile(join(dataDir, "index.json"), JSON.stringify(history) + "\n");
