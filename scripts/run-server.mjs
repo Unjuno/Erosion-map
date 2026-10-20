@@ -15,6 +15,20 @@ const store = new Store(dbPath);
 store.initialize();
 store.pruneExpirations();
 
+// Single-process development scheduler. The production platform should use a
+// durable scheduled job and a multi-instance-safe database transaction instead.
+function tickClosedDays() {
+  try {
+    const published = store.publishClosedDays();
+    if (published.length > 0) console.log("Published closed days:", published);
+  } catch (error) {
+    console.error("Daily state publication failed:", error);
+  }
+}
+tickClosedDays();
+const dailyTimer = setInterval(tickClosedDays, 60 * 60_000);
+
+
 const server = createApplication({ store, origin, rpID });
 server.listen(port, "127.0.0.1", () => {
   console.log("Local WebAuthn dev server: " + origin);
@@ -22,6 +36,7 @@ server.listen(port, "127.0.0.1", () => {
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
+    clearInterval(dailyTimer);
     server.close(() => { store.close(); process.exit(0); });
   });
 }

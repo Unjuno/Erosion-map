@@ -10,7 +10,8 @@
     "dev": "npm run build:site && node scripts/serve.mjs",
     "test": "npm run build:site && node --check site/app.js && node --check site/account.js && node --test tests/*.test.mjs",
     "dev:full": "npm run build:site && node scripts/run-server.mjs",
-    "job": "npm run build && node scripts/daily-job.mjs"
+    "job": "npm run build && node scripts/daily-job.mjs",
+    "export:states": "npm run build:site && node scripts/export-states.mjs"
   },
   "devDependencies": {
     "typescript": "5.8.3"

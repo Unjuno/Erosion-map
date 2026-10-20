@@ -71,3 +71,14 @@ npm run job        # 日本時間で締まった日付のstateをDBへ確定
 **本番利用不可**: `server/store.mjs` はNode 22の実験的`node:sqlite` に依存し、単一インスタンス前提です。大規模同時アクセス、複数インスタンス、サーバーレス上の永続性は未検証です。WebAuthn端末実機でのエンドツーエンド検証、HTTPSドメイン・デプロイ・CSRF/DoS・バックアップ・復旧設計が必要です。現段階では個人データを登録して公開運用しないでください。
 
 参照: [SimpleWebAuthn server](https://simplewebauthn.dev/docs/packages/server)。
+
+
+## 公開履歴の静的書き出し
+
+```bash
+npm run export:states
+```
+
+永続DBから公開済みのスナップショットだけを `site/data/state-YYYY-MM-DD.json` と `site/data/index.json`、最新の `site/data.js` に書き出します。ユーザーID・パスキー公開鍵・セッション・投稿編集履歴はエクスポートしません。
+
+開発用バックエンド `npm run dev:full` を起動している間は1時間ごとにJST締切済みの日付を確定しようとします。実際の公開環境では永続ジョブと独立したDBを用い、公開前に排他性・バックアップを検証する必要があります。

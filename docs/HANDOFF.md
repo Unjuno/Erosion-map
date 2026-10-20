@@ -64,3 +64,8 @@ npm run dev
 ## ブロッカー: 長期増幅
 
 https://github.com/Unjuno/Erosion-map/issues/3 の実測により、暫定同文字合算ルールは単一N3から52日後に安全整数を超える。長期運用する日次ジョブを有効にする前に、合算方式・上限・減衰・BigIntなどの選択を正式決定し、最低365日の回帰試験を行うこと。
+
+
+## 公開用の状態ファイル
+
+`npm run export:states` は非公開DBから、公開されてもよいスナップショットのみを `site/data/state-YYYY-MM-DD.json`、`site/data/index.json`、`site/data.js` に書き出す。ユーザー認証や投稿のDBはエクスポートしない。GPT Sitesへファイルを運ぶ場合はこの出力を候補にできるが、日次計算の自動実行と安全な配信は別途構築が必要。
