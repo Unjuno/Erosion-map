@@ -1,13 +1,17 @@
 {
   "name": "erosion-map",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Deterministic receiver-driven erosion-map engine",
+  "description": "Deterministic receiver-driven erosion map and static interactive preview",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "build:site": "npm run build && node scripts/build-site.mjs",
+    "dev": "npm run build:site && node scripts/serve.mjs",
+    "test": "npm run build:site && node --test tests/*.test.mjs"
   },
-  "devDependencies": { "typescript": "5.8.3" },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  },
   "engines": { "node": ">=22" }
 }
