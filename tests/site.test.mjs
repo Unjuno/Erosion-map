@@ -8,7 +8,7 @@ import { nextIsoDay } from "../dist/calendar.js";
 
 test("site bundle contains all offline-loadable assets", async () => {
   for (const name of ["index.html", "styles.css", "app.js",
-    "engine.js", "daily.js", "calendar.js", "ranking.html", "ranking.css", "ranking.js", "demo-data.js"]) {
+    "engine.js", "daily.js", "calendar.js", "ranking.html", "ranking.css", "ranking.js", "demo-data.js", "policy.html", "policy.css"]) {
     const result = await stat(join("site", name));
     assert.ok(result.size > 0, name);
   }

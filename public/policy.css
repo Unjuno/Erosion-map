@@ -1,0 +1,14 @@
+.policy-main{max-width:1000px;margin:0 auto;padding:60px 0 100px}
+.policy-main h1{font-size:clamp(38px,6vw,68px);margin:24px 0 32px;font-weight:650}
+.policy-main h1 em{font-style:normal;color:var(--accent)}
+.policy-main .hero-notice{max-width:100%;display:block;line-height:2}
+.policy-main .hero-notice strong{display:block;color:#fff3c1;margin-bottom:8px}
+.policy-card{background:var(--surface);border:1px solid var(--line);padding:28px 32px;margin-top:22px}
+.policy-card>span{color:var(--accent);font-size:10px;letter-spacing:.2em}
+.policy-card h2{font-size:22px;margin:12px 0 22px}
+.policy-card p{font-size:12px;line-height:2;color:#acbfc4}
+.policy-card a{color:var(--accent);text-decoration:underline}
+.policy-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 30px}
+.policy-grid article{border-top:1px solid var(--line);padding:18px 0}
+.policy-grid h3{margin:0 0 10px;font-size:14px}
+@media(max-width:690px){.policy-grid{grid-template-columns:1fr}.policy-main{padding:40px 0 70px}.policy-card{padding:20px}}
