@@ -95,3 +95,60 @@ test("SQLite database persists on disk", async () => {
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+
+test("two DB connections preserve a single monotonic same-day revision", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "erosion-multi-"));
+  const path = join(folder, "multi.sqlite");
+  let one, two;
+  try {
+    one = new Store(path);
+    one.initialize(new Date("2026-10-20T12:00:00Z"));
+    one.createUser("shared-user");
+    two = new Store(path);
+    for (let i = 1; i <= 40; i++) {
+      const store = i % 2 === 0 ? two : one;
+      const result = store.submit("shared-user", "2026-10-20", i, 0, "A");
+      assert.equal(result.revision, i);
+    }
+    assert.equal(two.dailyPosts("2026-10-20").length, 1);
+    assert.equal(two.currentPost("shared-user", "2026-10-20").revision, 40);
+
+    const finalized = one.publishDay("2026-10-20");
+    assert.equal(finalized.existed, false);
+    assert.deepEqual(two.publishDay("2026-10-20").state, finalized.state);
+    assert.throws(() => two.submit("shared-user", "2026-10-20", 0, 0, "B"),
+      /closed/);
+  } finally {
+    one?.close();
+    two?.close();
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("an influence overflow rolls back day publication without losing the post", () => {
+  const db = new Store();
+  try {
+    db.initialize(new Date("2026-10-20T12:00:00Z"));
+    const doomed = {
+      date: "2026-10-19",
+      bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
+      cells: [
+        { x: -1, y: 0, char: "A", n: Number.MAX_SAFE_INTEGER },
+        { x: 1, y: 0, char: "A", n: Number.MAX_SAFE_INTEGER },
+      ],
+    };
+    const encoded = JSON.stringify(doomed);
+    const digest = createHash("sha256").update(encoded).digest("hex");
+    db.db.prepare("UPDATE snapshots SET state_json=?, sha256=? WHERE day=?")
+      .run(encoded, digest, "2026-10-19");
+    db.createUser("user-1");
+    db.submit("user-1", "2026-10-20", 20, 20, "星");
+    assert.throws(() => db.publishDay("2026-10-20"), /safe integer/);
+    assert.equal(db.snapshot("2026-10-20"), null);
+    assert.equal(db.latestState().date, "2026-10-19");
+    assert.equal(db.dailyPosts("2026-10-20").length, 1);
+  } finally {
+    db.close();
+  }
+});
