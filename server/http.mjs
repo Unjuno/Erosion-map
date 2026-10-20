@@ -304,8 +304,14 @@ export function createApplication({
       if (method !== "GET" && method !== "HEAD") {
         throw new HTTPError(405, "method not allowed");
       }
-      const relative = decodeURIComponent(path) === "/"
-        ? "index.html" : decodeURIComponent(path).replace(/^\/+/, "");
+      const decodedPath = decodeURIComponent(path);
+      const aliases = new Map([
+        ["/submit", "account.html"],
+        ["/ranking", "ranking.html"],
+        ["/policy", "policy.html"],
+      ]);
+      const relative = aliases.get(decodedPath) ??
+        (decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, ""));
       const filename = resolve(directory, relative);
       if (!filename.startsWith(directory + sep)) throw new HTTPError(403, "forbidden");
       let content;

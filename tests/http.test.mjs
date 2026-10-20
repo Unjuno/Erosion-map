@@ -85,3 +85,20 @@ test("login challenge is discoverable-credential based, no email required", asyn
     assert.deepEqual(result.options.allowCredentials, []);
   });
 });
+
+
+test("all four documented site routes serve the correct HTML", async () => {
+  await withServer(async ({ base }) => {
+    for (const [path, marker] of [
+      ["/", "mapCanvas"],
+      ["/submit", "realPostForm"],
+      ["/ranking", "rankingRows"],
+      ["/policy", "正式なプライバシーポリシーや利用規約としては未発効"],
+    ]) {
+      const response = await fetch(base + path);
+      assert.equal(response.status, 200, path);
+      assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+      assert.ok((await response.text()).includes(marker), path);
+    }
+  });
+});

@@ -19,8 +19,14 @@ const server = createServer(async (request, response) => {
   }
   try {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
-    const relative = decodeURIComponent(path) === "/"
-      ? "index.html" : decodeURIComponent(path).replace(/^\/+/, "");
+    const decodedPath = decodeURIComponent(path);
+      const aliases = new Map([
+        ["/submit", "account.html"],
+        ["/ranking", "ranking.html"],
+        ["/policy", "policy.html"],
+      ]);
+      const relative = aliases.get(decodedPath) ??
+        (decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, ""));
     const file = resolve(root, relative);
     if (!file.startsWith(root + sep)) {
       response.writeHead(403).end("Forbidden");

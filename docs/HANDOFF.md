@@ -83,3 +83,7 @@ https://github.com/Unjuno/Erosion-map/issues/3 の実測により、暫定同文
 ## 個人情報と運用ポリシー
 
 `public/policy.html` は現行コードの取り扱いを説明する**開発版ドラフト**であり、本番の法的通知ではない。運営主体、問い合わせ窓口、保持・削除・復旧・広告・法令遵守を決めてから正式化する。
+
+## 既定の4ページルート
+
+ローカルHTTPサーバーは `/`、`/submit`、`/ranking`、`/policy` を公開する。静的配信の場合は `.html` を使うかRewriteを設定。GPT Sites対応は未確認。
