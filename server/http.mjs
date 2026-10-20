@@ -64,6 +64,15 @@ async function readJSON(req) {
   }
   return parsed;
 }
+async function verifyPasskeyInput(verify) {
+  try {
+    return await verify();
+  } catch {
+    // Cryptographic/format validation failures are client errors, not 500s.
+    // Do not echo untrusted WebAuthn payloads or library internals.
+    throw new HTTPError(400, "passkey verification failed");
+  }
+}
 function errorMessage(error) {
   if (error instanceof HTTPError) return { status: error.status, message: error.message };
   if (error instanceof RangeError || error instanceof SyntaxError) {
@@ -212,13 +221,13 @@ export function createApplication({
           if (already && sessionUser(req) !== pending.userId) {
             throw new HTTPError(403, "current session required to add passkey");
           }
-          const checked = await verifyRegistrationResponse({
+          const checked = await verifyPasskeyInput(() => verifyRegistrationResponse({
             response: payload.credential,
             expectedChallenge: pending.challenge,
             expectedOrigin,
             expectedRPID: rpID,
             requireUserVerification: true,
-          });
+          }));
           if (!checked.verified || !checked.registrationInfo) {
             throw new HTTPError(400, "registration verification failed");
           }
@@ -248,7 +257,7 @@ export function createApplication({
           const pending = pendingChallenge(req, "authenticate");
           const credential = store.credentialById(payload.credential?.id);
           if (!credential) throw new HTTPError(400, "unknown passkey");
-          const checked = await verifyAuthenticationResponse({
+          const checked = await verifyPasskeyInput(() => verifyAuthenticationResponse({
             response: payload.credential,
             expectedChallenge: pending.challenge,
             expectedOrigin,
@@ -260,7 +269,7 @@ export function createApplication({
               transports: credential.transports,
             },
             requireUserVerification: true,
-          });
+          }));
           if (!checked.verified || !checked.authenticationInfo) {
             throw new HTTPError(400, "authentication verification failed");
           }

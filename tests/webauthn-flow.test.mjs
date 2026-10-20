@@ -208,7 +208,8 @@ test("invalid WebAuthn RP origin never provisions a user", async () => {
         begin.json.options.challenge, "https://unrelated.example",
       ),
     }, pendingCookie);
-    assert.notEqual(response.res.status, 200);
+    assert.equal(response.res.status, 400);
+    assert.equal(response.json.error, "passkey verification failed");
     assert.equal(store.usersCount(), 0);
   });
 });
@@ -232,7 +233,38 @@ test("tampered passkey assertion does not authenticate", async () => {
     const invalid = await post("/api/auth/login/finish", {
       credential: assertion,
     }, loginCookie);
-    assert.notEqual(invalid.res.status, 200);
+    assert.equal(invalid.res.status, 400);
+    assert.equal(invalid.json.error, "passkey verification failed");
     assert.equal((await get("/api/me")).json.authenticated, false);
+  });
+});
+
+
+test("existing account can add a second passkey, without creating a new user", async () => {
+  await withServer(async ({ store, post, get }) => {
+    const original = simulatedAuthenticator();
+    const start = await post("/api/auth/register/start", {});
+    const registration = await post("/api/auth/register/finish", {
+      credential: original.register(start.json.options.challenge),
+    }, cookie(start.res.headers.get("set-cookie"), "erosion_challenge"));
+    assert.equal(registration.res.status, 200);
+    const session = cookie(registration.res.headers.get("set-cookie"), "erosion_session");
+
+    const additional = simulatedAuthenticator();
+    const newStart = await post("/api/auth/register/start", {}, session);
+    assert.equal(newStart.res.status, 200);
+    assert.deepEqual(
+      newStart.json.options.excludeCredentials.map((record) => record.id),
+      [original.id],
+    );
+    const newChallenge = cookie(newStart.res.headers.get("set-cookie"), "erosion_challenge");
+    const finished = await post("/api/auth/register/finish", {
+      credential: additional.register(newStart.json.options.challenge),
+    }, session + "; " + newChallenge);
+    assert.equal(finished.res.status, 200, JSON.stringify(finished.json));
+    assert.equal(store.usersCount(), 1);
+    const updatedSession = cookie(finished.res.headers.get("set-cookie"), "erosion_session");
+    assert.equal((await get("/api/me", updatedSession)).json.credentialCount, 2);
+    assert.equal((await get("/api/me", session)).json.authenticated, false);
   });
 });
