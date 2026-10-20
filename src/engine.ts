@@ -16,6 +16,16 @@ export type Snapshot = Readonly<{
 }>;
 export type Claim = Readonly<{ char: string; n: number }>;
 export type CollisionResult = Readonly<{ char: string; n: number }> | null;
+/** The default "sum" remains the unapproved historical simulation model. */
+export type ErosionRules = Readonly<{ sameGlyphMode?: "sum" | "max" }>;
+
+function verifyMode(rules: ErosionRules): "sum" | "max" {
+  const mode = rules.sameGlyphMode ?? "sum";
+  if (mode !== "sum" && mode !== "max") {
+    throw new RangeError("sameGlyphMode must be 'sum' or 'max'");
+  }
+  return mode;
+}
 type Point = Readonly<{ x: number; y: number }>;
 
 const directions: readonly Point[] = [
@@ -63,19 +73,25 @@ export function normalizeGlyph(char: string): string {
 
 /**
  * PROVISIONAL collision rule:
- * 1) add strengths with identical glyphs;
+ * 1) group identical glyphs by "sum" (existing default) or "max" (experimental);
  * 2) strongest glyph is the only possible survivor;
  * 3) subtract the sum of every other glyph;
  * 4) if the remainder is not positive, return empty.
  *
  * This resolves three-way conflicts deterministically and without input-order bias.
  */
-export function resolveCollision(claims: readonly Claim[]): CollisionResult {
+export function resolveCollision(
+  claims: readonly Claim[], rules: ErosionRules = {},
+): CollisionResult {
+  const mode = verifyMode(rules);
   const grouped = new Map<string, number>();
   for (const claim of claims) {
     const char = normalizeGlyph(claim.char);
     assertPositive(claim.n, "claim.n");
-    grouped.set(char, addChecked(grouped.get(char) ?? 0, claim.n));
+    const existing = grouped.get(char) ?? 0;
+    grouped.set(char, mode === "max"
+      ? Math.max(existing, claim.n)
+      : addChecked(existing, claim.n));
   }
   const factions = [...grouped.entries()]
     .map(([char, n]) => ({ char, n }))
@@ -118,7 +134,10 @@ function validateSnapshot(snapshot: Snapshot): Map<string, Cell> {
  * Pending approval: residents defend with current n; a cell fully enclosed
  * by the same character is frozen at its original strength.
  */
-export function advanceOneDay(previous: Snapshot, nextDate: string): Snapshot {
+export function advanceOneDay(
+  previous: Snapshot, nextDate: string, rules: ErosionRules = {},
+): Snapshot {
+  verifyMode(rules);
   assertIsoDay(nextDate);
   assertIsoDay(previous.date);
   if (nextDate <= previous.date)
@@ -159,7 +178,7 @@ export function advanceOneDay(previous: Snapshot, nextDate: string): Snapshot {
     const claims: Claim[] = resident === undefined
       ? incoming
       : [{ char: resident.char, n: resident.n }, ...incoming];
-    const survivor = resolveCollision(claims);
+    const survivor = resolveCollision(claims, rules);
     if (survivor !== null) output.push({ x, y, ...survivor });
   }
   output.sort((a, b) => a.x - b.x || a.y - b.y);
