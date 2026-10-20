@@ -257,6 +257,17 @@ export function createApplication({
           const pending = pendingChallenge(req, "authenticate");
           const credential = store.credentialById(payload.credential?.id);
           if (!credential) throw new HTTPError(400, "unknown passkey");
+          // A discoverable credential's userHandle, when present, must identify
+          // the owner of the verified credential ID. Do not trust client names.
+          const providedHandle = payload.credential?.response?.userHandle;
+          if (providedHandle !== null && providedHandle !== undefined) {
+            if (typeof providedHandle !== "string" ||
+                !/^[A-Za-z0-9_-]+$/.test(providedHandle) ||
+                !Buffer.from(providedHandle, "base64url")
+                  .equals(Buffer.from(credential.userId, "utf8"))) {
+              throw new HTTPError(400, "passkey user handle mismatch");
+            }
+          }
           const checked = await verifyPasskeyInput(() => verifyAuthenticationResponse({
             response: payload.credential,
             expectedChallenge: pending.challenge,

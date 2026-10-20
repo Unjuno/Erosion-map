@@ -176,6 +176,19 @@ test("cryptographic passkey registration, login and authenticated post end-to-en
     assert.equal((await get("/api/me", activeCookie)).json.authenticated, false);
     assert.equal((await post("/api/post", { x: 0, y: 0, char: "星" }, activeCookie)).res.status, 401);
 
+    const wrongLogin = await post("/api/auth/login/start", {});
+    assert.equal(wrongLogin.res.status, 200);
+    const wrongCookie = cookie(wrongLogin.res.headers.get("set-cookie"), "erosion_challenge");
+    const wrongHandleAssertion = authenticator.authenticate(
+      wrongLogin.json.options.challenge,
+      b64url(Buffer.from("different-account-id", "utf8")),
+    );
+    const rejected = await post("/api/auth/login/finish", {
+      credential: wrongHandleAssertion,
+    }, wrongCookie);
+    assert.equal(rejected.res.status, 400);
+    assert.equal(rejected.json.error, "passkey user handle mismatch");
+
     const startLogin = await post("/api/auth/login/start", {});
     assert.equal(startLogin.res.status, 200);
     const loginCookie = cookie(startLogin.res.headers.get("set-cookie"), "erosion_challenge");

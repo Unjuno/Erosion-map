@@ -87,3 +87,7 @@ https://github.com/Unjuno/Erosion-map/issues/3 の実測により、暫定同文
 ## 既定の4ページルート
 
 ローカルHTTPサーバーは `/`、`/submit`、`/ranking`、`/policy` を公開する。静的配信の場合は `.html` を使うかRewriteを設定。GPT Sites対応は未確認。
+
+## WebAuthn認証の検証追加
+
+開発APIは登録・ログインの署名に加えて、存在する場合のuserHandleがcredential IDに結び付く内部ユーザーと一致することも検査する。パスキーの複数登録、署名不正、RP Origin不一致、再送拒否を自動テストで確認したが、実機と本番ドメインでの検証は未完了。
