@@ -120,5 +120,5 @@ test("same-character reinforcement grows rapidly under provisional rules", () =>
       .toISOString().slice(0, 10);
     snapshot = advanceOneDay(snapshot, next);
   }
-  assert.ok(Math.max(...snapshot.cells.map((cell) => cell.n) > 1_000_000);
+  assert.ok(Math.max(...snapshot.cells.map((cell) => cell.n)) > 1_000_000);
 });
