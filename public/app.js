@@ -28,6 +28,9 @@ const seed = Object.freeze({
 });
 const steps = 12;
 let snapshots = [];
+let demoSnapshots = [];
+let archivedSnapshots = null;
+let liveMode = false;
 let frameIndex = 0;
 let selected = { x: 0, y: 0 };
 let viewX = 0;
@@ -51,7 +54,7 @@ function colorOf(char) {
 }
 function clamp(value, lo, hi) { return Math.min(hi, Math.max(lo, value)); }
 function inside(x, y) {
-  const b = seed.bounds;
+  const b = current().bounds;
   return x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY;
 }
 function sizeOfCell() { return 18 * zoom; }
@@ -69,6 +72,8 @@ function buildHistory() {
       : advanceOneDay(previous, date);
     snapshots.push(updated);
   }
+  demoSnapshots = snapshots;
+  if (liveMode && archivedSnapshots !== null) snapshots = archivedSnapshots;
   byId("dayRange").max = String(snapshots.length - 1);
   frameIndex = clamp(frameIndex, 0, snapshots.length - 1);
 }
@@ -416,6 +421,7 @@ byId("previewForm").addEventListener("submit", (event) => {
       throw new RangeError("座標は地図内の整数で指定してください。");
     }
     if (![1, 3, 5, 7].includes(n)) throw new RangeError("勢力値が不正です。");
+    if (liveMode) activateDemo();
     previewPost = {
       userId: "local-preview-user", revision: 1,
       date: nextIsoDay(seed.date), x, y, char,
@@ -436,6 +442,7 @@ byId("previewForm").addEventListener("submit", (event) => {
 });
 byId("resetPreview").addEventListener("click", () => {
   stopPlayback();
+  if (liveMode) activateDemo();
   previewPost = null;
   previewStrength = 1;
   frameIndex = 0;
@@ -462,3 +469,69 @@ if (dated >= 0) frameIndex = dated;
 byId("mapCanvas").addEventListener("contextmenu", (event) => event.preventDefault());
 new ResizeObserver(renderSoon).observe(canvas);
 updatePanels();
+
+
+/**
+ * When the local backend is available, present finalized DB snapshots alongside
+ * the deterministic sandbox. Public snapshots contain only coordinates/char/N.
+ * No authentication data is fetched by the map itself.
+ */
+function activateDemo() {
+  stopPlayback();
+  liveMode = false;
+  snapshots = demoSnapshots;
+  frameIndex = 0;
+  byId("dayRange").max = String(snapshots.length - 1);
+  const toggle = document.getElementById("toggleArchive");
+  if (toggle) toggle.textContent = "公開アーカイブを見る";
+  document.querySelector(".panel-label").textContent = "LIVE SIMULATION / LOCAL DEMO";
+  updatePanels();
+}
+function activateArchive() {
+  if (!archivedSnapshots || archivedSnapshots.length === 0) return;
+  stopPlayback();
+  liveMode = true;
+  snapshots = archivedSnapshots;
+  frameIndex = snapshots.length - 1;
+  byId("dayRange").max = String(snapshots.length - 1);
+  const toggle = document.getElementById("toggleArchive");
+  if (toggle) toggle.textContent = "デモに戻る";
+  document.querySelector(".panel-label").textContent = "PUBLISHED SNAPSHOTS / DEVELOPMENT DATABASE";
+  byId("previewMessage").textContent =
+    "公開アーカイブを閲覧中です。仮投稿するとデモ表示へ戻ります。";
+  updatePanels();
+}
+async function findPublishedArchive() {
+  try {
+    const status = await fetch("./api/status", { credentials: "same-origin" });
+    if (!status.ok || !status.headers.get("content-type")?.includes("application/json")) return;
+    const historyResponse = await fetch("./api/history", { credentials: "same-origin" });
+    if (!historyResponse.ok) return;
+    const history = await historyResponse.json();
+    const days = (history.days ?? []).slice(0, 21).reverse();
+    const archived = [];
+    for (const record of days) {
+      const response = await fetch("./api/state?date=" + encodeURIComponent(record.day),
+        { credentials: "same-origin" });
+      if (!response.ok) return;
+      const parsed = await response.json();
+      const state = parsed.state;
+      if (!state || !Array.isArray(state.cells) || !state.bounds) return;
+      archived.push(state);
+    }
+    if (archived.length === 0) return;
+    archivedSnapshots = archived;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = "toggleArchive";
+    button.textContent = "公開アーカイブを見る";
+    button.addEventListener("click", () => {
+      if (liveMode) activateDemo();
+      else activateArchive();
+    });
+    document.querySelector(".map-toolbar").append(button);
+  } catch {
+    // Static exports intentionally work without the optional HTTP backend.
+  }
+}
+void findPublishedArchive();
