@@ -6,7 +6,7 @@ const target = join(root, "site");
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
 
-for (const file of ["index.html", "styles.css", "app.js", "account.html", "account.css", "account.js"]) {
+for (const file of ["index.html", "styles.css", "app.js", "account.html", "account.css", "account.js", "demo-data.js", "ranking.html", "ranking.css", "ranking.js"]) {
   await cp(join(root, "public", file), join(target, file));
 }
 for (const file of ["engine.js", "daily.js", "calendar.js"]) {

@@ -1,4 +1,5 @@
-import { advanceOneDay, boundsForUserCount, normalizeGlyph } from "./engine.js";
+import { advanceOneDay, normalizeGlyph } from "./engine.js";
+import { demoSeed } from "./demo-data.js";
 import { buildDailySnapshot } from "./daily.js";
 import { nextIsoDay } from "./calendar.js";
 
@@ -15,17 +16,7 @@ const minimumZoom = 0.03;
 const maximumZoom = 5;
 const glyphPalette = ["#c6f08f", "#ecb67e", "#9cb3ee", "#e29fc2",
   "#87d3c6", "#ead88c", "#bbabeb", "#f09b83"];
-const seed = Object.freeze({
-  date: "2026-10-01",
-  bounds: boundsForUserCount(0),
-  cells: Object.freeze([
-    { x: -9, y: -3, char: "文", n: 7 },
-    { x: 9, y: -5, char: "海", n: 7 },
-    { x: 2, y: 9, char: "森", n: 6 },
-    { x: -12, y: 9, char: "星", n: 6 },
-    { x: 1, y: 0, char: "光", n: 5 },
-  ]),
-});
+const seed = demoSeed;
 const steps = 12;
 let snapshots = [];
 let demoSnapshots = [];

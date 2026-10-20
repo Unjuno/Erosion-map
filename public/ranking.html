@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101820">
+  <meta name="description" content="侵食マップの支配マス数、勢力値合計、履歴内の出現日数を比較。">
+  <title>勢力ランキング — EROSION MAP</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./ranking.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="identity" href="./">
+        <span class="identity-mark" aria-hidden="true">◈</span>
+        <span><strong>EROSION MAP</strong><small>ONE CHARACTER A DAY</small></span>
+      </a>
+      <nav class="top-links" aria-label="サイト内メニュー">
+        <a href="./">MAP</a>
+        <a href="./account.html">PASSKEY / POST</a>
+        <a href="./ranking.html" aria-current="page">RANKING</a>
+        <a href="https://github.com/Unjuno/Erosion-map" target="_blank" rel="noopener noreferrer">SOURCE ↗</a>
+      </nav>
+    </header>
+    <main class="ranking-main">
+      <div class="eyebrow"><span class="small-line"></span> A RECORD OF EVERY CONFLICT</div>
+      <h1>勢力の、<em>現在地。</em></h1>
+      <p class="ranking-lead">文字ごとの支配マス数、勢力値合計、読み込んだ履歴内での出現日数を集計します。</p>
+      <div class="hero-notice" role="note" id="rankingStatus">
+        データを読み込んでいます。APIがない場合は合成デモから集計します。
+      </div>
+      <section class="ranking-surface" aria-labelledby="rankingHeadline">
+        <div class="ranking-toolbar">
+          <div>
+            <span class="ranking-section-id">01 / FACTION LEADERBOARD</span>
+            <h2 id="rankingHeadline">勢力ランキング</h2>
+            <p id="rankingDate">表示日: —</p>
+          </div>
+          <div class="ranking-controls">
+            <label for="rankingSort">並び替え</label>
+            <select id="rankingSort">
+              <option value="cells">支配マス数</option>
+              <option value="strength">勢力値合計</option>
+              <option value="days">履歴内の出現日数</option>
+            </select>
+            <label for="rankingFilter">文字を探す</label>
+            <input id="rankingFilter" type="search" placeholder="例：海" autocomplete="off">
+          </div>
+        </div>
+        <div class="ranking-summary" aria-live="polite">
+          <div><span>支配マス数</span><strong id="totalOccupied">—</strong></div>
+          <div><span>勢力種類</span><strong id="totalFactions">—</strong></div>
+          <div><span>集計対象履歴</span><strong id="historyDays">—</strong></div>
+        </div>
+        <div class="ranking-table-wrap">
+          <table class="ranking-table">
+            <thead><tr>
+              <th scope="col">順位</th>
+              <th scope="col">文字</th>
+              <th scope="col" class="numeric">支配マス</th>
+              <th scope="col" class="numeric">Σ N</th>
+              <th scope="col" class="numeric">出現日数</th>
+            </tr></thead>
+            <tbody id="rankingRows"><tr><td colspan="5">集計中…</td></tr></tbody>
+          </table>
+        </div>
+        <p class="rank-explanation">
+          集計範囲は最新日とその直近最大29件、計30スナップショットです。
+          「出現日数」はこの履歴内にその文字が存在した日数であり、連続生存期間ではありません。
+          同一文字は全マスを合算します。開発用プレビューの場合、結果は実際の投稿ランキングではありません。
+        </p>
+      </section>
+    </main>
+    <footer>
+      <span>EROSION MAP / EXPERIMENTAL LEADERBOARD</span>
+      <span><a href="./">MAP</a> · <a href="https://github.com/Unjuno/Erosion-map">GITHUB ↗</a></span>
+    </footer>
+  </div>
+  <script type="module" src="./ranking.js"></script>
+</body>
+</html>
