@@ -199,10 +199,17 @@ export class Store {
     if (!Number.isSafeInteger(n) || n < 1 || n > 100) {
       throw new RangeError("event N must be an integer 1..100");
     }
-    if (this.snapshot(day)) throw new Error("published day is immutable");
-    this.db.prepare(
-      "INSERT INTO day_config(day,post_strength) VALUES(?,?) ON CONFLICT(day) DO UPDATE SET post_strength=excluded.post_strength"
-    ).run(day, n);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.snapshot(day)) throw new Error("published day is immutable");
+      this.db.prepare(
+        "INSERT INTO day_config(day,post_strength) VALUES(?,?) ON CONFLICT(day) DO UPDATE SET post_strength=excluded.post_strength"
+      ).run(day, n);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
   /** Atomic final daily post. Caller MUST already be authenticated. */
   submit(userId, day, x, y, char) {
@@ -216,15 +223,22 @@ export class Store {
     if (x < b.minX || x > b.maxX || y < b.minY || y > b.maxY) {
       throw new RangeError("post lies outside map bounds");
     }
-    if (this.snapshot(day)) throw new Error("submissions are closed for the published day");
-    const row = this.db.prepare(
-      "INSERT INTO posts(user_id,day,revision,x,y,char,updated_at) " +
-      "VALUES(?,?,1,?,?,?,?) " +
-      "ON CONFLICT(user_id,day) DO UPDATE SET revision=posts.revision+1, " +
-      "x=excluded.x, y=excluded.y, char=excluded.char, updated_at=excluded.updated_at " +
-      "RETURNING revision"
-    ).get(userId, day, x, y, normalized, nowMs());
-    return { revision: Number(row.revision), day, x, y, char: normalized };
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.snapshot(day)) throw new Error("submissions are closed for the published day");
+      const row = this.db.prepare(
+        "INSERT INTO posts(user_id,day,revision,x,y,char,updated_at) " +
+        "VALUES(?,?,1,?,?,?,?) " +
+        "ON CONFLICT(user_id,day) DO UPDATE SET revision=posts.revision+1, " +
+        "x=excluded.x, y=excluded.y, char=excluded.char, updated_at=excluded.updated_at " +
+        "RETURNING revision"
+      ).get(userId, day, x, y, normalized, nowMs());
+      this.db.exec("COMMIT");
+      return { revision: Number(row.revision), day, x, y, char: normalized };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
   currentPost(userId, day) {
     checkUserID(userId);
