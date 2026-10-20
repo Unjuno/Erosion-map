@@ -96,3 +96,29 @@ test('input snapshot is not mutated', () => {
   advanceOneDay(before, '2026-10-21');
   assert.equal(before.cells[0].n, 3);
 });
+
+
+test("invalid dates and invisible characters fail validation", () => {
+  assert.throws(() => advanceOneDay({
+    date: "2026-02-30", bounds, cells: [],
+  }, "2026-03-01"), /invalid ISO/);
+  assert.throws(() => advanceOneDay({
+    date: "2026-02-28", bounds, cells: [],
+  }, "2026-02-30"), /invalid ISO/);
+  assert.throws(() => normalizeGlyph(" "), /invisible/);
+  assert.throws(() => normalizeGlyph("\u0000"), /invisible/);
+  assert.equal(normalizeGlyph("👨‍👩‍👧‍👦"), "👨‍👩‍👧‍👦");
+});
+
+test("same-character reinforcement grows rapidly under provisional rules", () => {
+  let snapshot = {
+    date: "2026-01-01", bounds: boundsForUserCount(0),
+    cells: [{ x: 0, y: 0, char: "A", n: 3 }],
+  };
+  for (let i = 0; i < 20; i++) {
+    const next = new Date(Date.parse(snapshot.date + "T00:00:00Z") + 86_400_000)
+      .toISOString().slice(0, 10);
+    snapshot = advanceOneDay(snapshot, next);
+  }
+  assert.ok(Math.max(...snapshot.cells.map((cell) => cell.n) > 1_000_000);
+});

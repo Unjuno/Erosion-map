@@ -1,3 +1,5 @@
+import { assertIsoDay } from "./calendar.js";
+
 /**
  * Pure receiver-driven erosion simulation, provisional v0.1.
  * Authentication, posting, persistence and cron are intentionally separate.
@@ -52,6 +54,10 @@ export function normalizeGlyph(char: string): string {
       [...segmenter.segment(glyph)].length !== 1) {
     throw new RangeError("char must be exactly one grapheme (max 32 UTF-16 units)");
   }
+  if (/^[\p{White_Space}\p{Cc}\p{Cf}]+$/u.test(glyph) ||
+      /[\u0000-\u001F\u007F-\u009F]/u.test(glyph)) {
+    throw new RangeError("invisible whitespace or control characters are not accepted");
+  }
   return glyph;
 }
 
@@ -90,8 +96,7 @@ function validateSnapshot(snapshot: Snapshot): Map<string, Cell> {
     assertInteger(value, "bounds." + label);
   if (b.minX > b.maxX || b.minY > b.maxY)
     throw new RangeError("bounds must be nonempty");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.date))
-    throw new RangeError("date must use YYYY-MM-DD");
+  assertIsoDay(snapshot.date);
   const output = new Map<string, Cell>();
   for (const cell of snapshot.cells) {
     assertInteger(cell.x, "cell.x");
@@ -114,8 +119,10 @@ function validateSnapshot(snapshot: Snapshot): Map<string, Cell> {
  * by the same character is frozen at its original strength.
  */
 export function advanceOneDay(previous: Snapshot, nextDate: string): Snapshot {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || nextDate <= previous.date)
-    throw new RangeError("nextDate must be later YYYY-MM-DD");
+  assertIsoDay(nextDate);
+  assertIsoDay(previous.date);
+  if (nextDate <= previous.date)
+    throw new RangeError("nextDate must be later than the snapshot date");
   const current = validateSnapshot(previous);
   const receivers = new Map<string, Point>();
   const addReceiver = (x: number, y: number): void => {
