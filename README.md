@@ -1,6 +1,6 @@
 # EROSION MAP — 1日1文字 侵食マップシステム
 
-[公開ソース](https://github.com/Unjuno/Erosion-map) · [自動テスト](https://github.com/Unjuno/Erosion-map/actions) · [Work引き継ぎ](docs/HANDOFF.md) · [アルゴリズム仕様](docs/ALGORITHM.md)
+[公開ソース](https://github.com/Unjuno/Erosion-map) · [自動テスト](https://github.com/Unjuno/Erosion-map/actions) · [アルゴリズム仕様](docs/ALGORITHM.md)
 
 パスキーでログインしたユーザーが1日1文字を座標指定で投稿し、**受け取り側のマス**が上下左右からの影響を受けて文字と勢力値を更新する日次シミュレーション。
 
@@ -62,7 +62,7 @@ server/               開発用 SQLite ストア、パスキーHTTP API
 public/               Canvas・投稿・ランキング・ポリシー画面
 scripts/              静的ビルド、ローカルサーバー、日次処理、公開JSON出力
 tests/                ユニット、DB接続、署名付き仮想認証器、公開データ検証
-docs/                 仕様・日次処理・Workへの引き継ぎ
+docs/                 公開用仕様・日次処理・アルゴリズム比較
 .github/workflows/ci.yml  GitHub Actions
 \`\`\`
 
