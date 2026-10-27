@@ -2,6 +2,8 @@ name: Engine CI
 on:
   push:
   pull_request:
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,3 +14,12 @@ jobs:
           node-version: '22'
       - run: npm install --no-audit --no-fund
       - run: npm test
+      - name: Package verified application
+        run: |
+          tar -czf application-bundle.tgz src server public scripts tests docs package.json package-lock.json tsconfig.json README.md .gitignore .github dist site node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: application-bundle
+          path: application-bundle.tgz
+          retention-days: 7
+          if-no-files-found: error
