@@ -529,6 +529,8 @@ async function findPublishedArchive() {
       else activateArchive();
     });
     document.querySelector(".map-toolbar").append(button);
+    // A real published archive takes priority over synthetic demo data.
+    activateArchive();
   } catch {
     // Static demo has no published archive: keep the synthetic time line.
   }
