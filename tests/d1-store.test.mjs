@@ -430,7 +430,7 @@ test("large same-glyph snapshots are stored losslessly with small column runs", 
       date: "2026-10-19",
       bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
       cells: Array.from({ length: 60_000 }, (_, i) => ({
-        x: i % 200, y: Math.floor(i / 200), char: "森", n: 1,
+        x: i % 250, y: Math.floor(i / 250), char: "森", n: 1,
       })),
     };
     const digest = await hashText(JSON.stringify(previous));
