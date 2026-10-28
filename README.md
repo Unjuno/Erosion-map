@@ -42,6 +42,7 @@ npm run preflight     # 本番公開の前提条件を判定（未確認なら�
 - `sites/d1-store.mjs` — 非同期D1 APIへのアクセス
 - `migrations/0001_d1_schema.sql` — D1のテーブルと一意制約
 - `migrations/0002_day_closure.sql` — 投稿締切時の確定・投稿競合を防ぐDBトリガー
+- `migrations/0003_closed_post_capture.sql` — 締切時に匿名投稿をトランザクション内で凍結し、退会と公開処理の競合から保護する
 - `.openai/hosting.json` — DBバインディング名 `DB` の設定（サイトIDや秘密情報は含めない）
 - `scripts/build-sites-worker.mjs` — `site/_worker.js` のバンドル
 - `public/` — HTML、CSS、Canvas、パスキー投稿画面
@@ -57,7 +58,7 @@ npm run preflight     # 本番公開の前提条件を判定（未確認なら�
 | `SAME_GLYPH_MODE` | 既定 `max` （v1候補）／従来 `sum` |
 | `N1_OUTBOUND` | 既定 `1` （v1候補）／従来 `0`、1はmax限定 |
 
-**SQL migrationは必ず0001、続いて0002の順にD1へ適用します。** 0002の`day_closures`とSQLトリガーなしでは日次締切の並行更新を保護できず、Sites APIは動作対象外です。認証情報やDBの中身はGitHubに置かないでください。
+**SQL migrationは必ず0001→0002→0003の順にSitesのD1へ適用します。** 0002の締切トリガーと0003の匿名投稿凍結トリガーが揃わない環境では公開処理を実行しないでください。0003は締切済み・未公開の日の既存投稿を移行時に捕捉しますが、移行前に削除された投稿は復旧できません。DBを事前にバックアップしてください。認証情報やDBの中身はGitHubに置かないでください。
 
 サイトの公開操作・D1作成・実運用のスケジュール設定は、このソース管理とは別にGPT Sites上で行います。`scheduled` イベントが利用できない場合は閲覧時に1日分を補完する実装がありますが、厳密な時刻での無訪問更新を保証しません。
 
