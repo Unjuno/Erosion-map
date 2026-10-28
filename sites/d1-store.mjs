@@ -311,7 +311,7 @@ export class D1Store {
     const digest = await hashText(serialized);
     // D1 batch is a transaction. The immutable unique day key prevents
     // competing publishers from overwriting one another.
-    await this.db.batch([
+    const writes = await this.db.batch([
       this.p(
         "INSERT INTO day_config(day,post_strength,same_glyph_mode,min_outbound,rule_override) VALUES(?,?,?,?,1) " +
         "ON CONFLICT(day) DO UPDATE SET post_strength=excluded.post_strength," +
@@ -326,7 +326,9 @@ export class D1Store {
     ]);
     const stored = await this.snapshot(day);
     if (!stored) throw new Error("snapshot write was not committed");
-    return { state: stored.state, existed: stored.sha256 !== digest };
+    // Use INSERT changes rather than checksum equality: concurrent jobs can
+    // compute the same digest but only the first one actually wrote the row.
+    return { state: stored.state, existed: writes[1]?.meta?.changes === 0 };
   }
   async publishClosedDays(instant = this.clock(), maxDays = 32) {
     safeInt(maxDays, "maxDays", 1);

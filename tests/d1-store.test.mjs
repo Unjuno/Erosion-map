@@ -134,3 +134,50 @@ test("D1 snapshot corruption is detected before serving", async () => {
     await assert.rejects(() => f.store.latestState(), /checksum/);
   } finally { f.close(); }
 });
+
+
+test("D1 resumes missed days in sequence and remains idempotent", async () => {
+  const f = await makeFixture(new Date("2026-10-23T00:30:00.000Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00.000Z"));
+    await f.store.registerCredential("owner", {
+      id: "key", publicKey: new Uint8Array([10, 20]), counter: 0,
+    }, true);
+    await f.store.run("INSERT INTO site_settings(key,value) VALUES(?,?)",
+      "receiver_default", JSON.stringify({
+        sameGlyphMode: "max", minimumOutgoingInfluence: 1,
+      }));
+    await f.store.submit("owner", "2026-10-20", 0, 0, "月");
+    const first = await f.store.publishClosedDays();
+    assert.deepEqual(first.map((record) => record.date),
+      ["2026-10-20", "2026-10-21", "2026-10-22"]);
+    assert.equal(first[0].cells, 5);
+    const final = await f.store.latestState();
+    assert.equal(final.date, "2026-10-22");
+    assert.ok(final.cells.length > 5);
+    assert.deepEqual(await f.store.publishClosedDays(), []);
+    const existing = await f.store.publishDay("2026-10-20");
+    assert.equal(existing.existed, true);
+  } finally { f.close(); }
+});
+
+test("D1 freezes effective daily rules and keeps the original day config", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00.000Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00.000Z"));
+    await f.store.run(
+      "INSERT INTO day_config(day,post_strength,same_glyph_mode,min_outbound,rule_override) VALUES(?,?,?,?,1)",
+      "2026-10-20", 3, "max", 1
+    );
+    const recorded = await f.store.publishDay("2026-10-20");
+    assert.equal(recorded.existed, false);
+    assert.deepEqual(await f.store.dayRules("2026-10-20"), {
+      postStrength: 3, sameGlyphMode: "max", minimumOutgoingInfluence: 1,
+    });
+    await f.store.run("INSERT INTO site_settings(key,value) VALUES(?,?)",
+      "receiver_default", JSON.stringify({
+        sameGlyphMode: "sum", minimumOutgoingInfluence: 0,
+      }));
+    assert.equal((await f.store.dayRules("2026-10-20")).sameGlyphMode, "max");
+  } finally { f.close(); }
+});
