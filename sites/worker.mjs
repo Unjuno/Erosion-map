@@ -55,13 +55,21 @@ function configuration(env) {
       (floor === 1 && mode !== "max")) {
     throw new Error("invalid trusted erosion rule settings");
   }
+  // A scheduled Worker can have a small D1 query/subrequest budget on
+  // free-tier hosts. Default to two closed days per invocation; a verified
+  // paid environment may explicitly select a larger catch-up window.
+  const catchupDays = env.MAX_CATCHUP_DAYS === undefined
+    ? 2 : Number(env.MAX_CATCHUP_DAYS);
+  if (!Number.isSafeInteger(catchupDays) || catchupDays < 1 || catchupDays > 32) {
+    throw new Error("MAX_CATCHUP_DAYS must be an integer from 1 to 32");
+  }
   const rateSecret = env.RATE_LIMIT_SECRET ?? null;
   if (rateSecret !== null &&
       (typeof rateSecret !== "string" || rateSecret.length < 32)) {
     throw new Error("RATE_LIMIT_SECRET must be at least 32 characters if provided");
   }
   return { origin: u.origin, rpID, secure: !local || u.protocol === "https:",
-    rateSecret,
+    rateSecret, catchupDays,
     rulesDefault: { sameGlyphMode: mode, minimumOutgoingInfluence: floor } };
 }
 function json(status, payload, cookies = []) {
@@ -433,7 +441,7 @@ export default {
     const store = new D1Store(env.DB, { rulesDefault: conf.rulesDefault });
     context.waitUntil((async () => {
       await store.pruneExpirations();
-      await store.publishClosedDays(new Date(), 32);
+      await store.publishClosedDays(new Date(), conf.catchupDays);
     })());
   },
 };
