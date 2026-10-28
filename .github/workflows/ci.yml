@@ -23,6 +23,9 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Engine, WebAuthn, SQLite, site tests
         run: npm test
+      - name: Synthetic performance measurement (Node 22)
+        if: matrix.node == '22'
+        run: npm run benchmark
       - name: Audit production dependency vulnerabilities
         run: npm audit --omit=dev --audit-level=high
       - name: Upload static preview (no DB or account data)
