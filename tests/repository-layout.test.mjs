@@ -22,6 +22,9 @@ test("public repository ships only technical migrations and config examples", as
   assert.match(hardening, /CREATE TABLE IF NOT EXISTS orphaned_posts/);
   assert.match(hardening, /CREATE TABLE IF NOT EXISTS snapshot_chunks/);
   assert.match(hardening, /DELETE FROM posts WHERE day IN/);
+  const rates = await readFile("migrations/0005_durable_rate_limits.sql", "utf8");
+  assert.match(rates, /CREATE TABLE IF NOT EXISTS rate_limits/);
+  assert.doesNotMatch(rates, /raw_ip|ip_address|credential_id/i);
   const variables = await readFile(".env.example", "utf8");
   assert.match(variables, /^PUBLIC_ORIGIN=/m);
   assert.doesNotMatch(variables, /(?:sk-proj-|AKIA[0-9A-Z]{16})/);
