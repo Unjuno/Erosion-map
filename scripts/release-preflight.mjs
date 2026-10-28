@@ -1,6 +1,8 @@
 /**
  * Release gate for Erosion Map.
- * A green CI is necessary but NEVER sufficient for a live passkey service.
+ * A green CI is necessary but NEVER sufficient for a public passkey service.
+ * This is a PRE-PUBLICATION checklist. It does not deploy a site, create D1,
+ * verify externally supplied flags, or claim the site is already live.
  * No network requests, credentials, or private configuration is logged.
  */
 export function assessRelease(config = {}) {
@@ -25,6 +27,10 @@ export function assessRelease(config = {}) {
       (domain === rpID || domain.endsWith("." + rpID)) &&
       rpID.length >= 3 && !rpID.startsWith("."),
     "RP ID must be a valid parent or equal domain of the public site");
+  check("sites_private_preview", config.privatePreviewVerified === true,
+    "Create and verify a ChatGPT Sites preview before a public release; GitHub CI is not a deployment");
+  check("d1_schema", config.d1SchemaVerified === true,
+    "Provision a fresh Sites D1 database and verify migrations 0001 through 0005 in order");
   check("sites_native_database", config.databaseProvider === "sites-native",
     "SQLite prototype cannot be used as Sites production persistence");
   check("durable_scheduler", config.durableSchedulerVerified === true,
@@ -42,6 +48,9 @@ export function assessRelease(config = {}) {
   check("load_test", config.loadTested === true,
     "Validate map, users and daily runner at target load");
   return {
+    // ready means eligible for a later, separately approved publication.
+    // It does not mean ChatGPT Sites is currently publicly reachable.
+    scope: "pre-publication-readiness",
     ready: checks.every((entry) => entry.status === "PASS"),
     origin,
     checks,
@@ -53,6 +62,8 @@ if (process.argv[1] && import.meta.url === new URL("file://" + process.argv[1]).
     publicOrigin: process.env.PUBLIC_ORIGIN,
     rpID: process.env.RP_ID,
     databaseProvider: process.env.DATABASE_PROVIDER,
+    privatePreviewVerified: process.env.PRIVATE_PREVIEW_VERIFIED === "true",
+    d1SchemaVerified: process.env.D1_SCHEMA_VERIFIED === "true",
     durableSchedulerVerified: process.env.SCHEDULER_VERIFIED === "true",
     passkeyDeviceTested: process.env.PASSKEY_DEVICE_TESTED === "true",
     algorithmApproved: process.env.ALGORITHM_APPROVED === "true",
