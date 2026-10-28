@@ -86,13 +86,41 @@ function setCookie(name, value, secure, ageSeconds) {
     (secure ? "; Secure" : "") + "; Max-Age=" + ageSeconds;
 }
 async function bodyJSON(request) {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (length > 65_536) throw new RequestError(413, "request too large");
-  const raw = await request.text();
-  if (raw.length > 65_536) throw new RequestError(413, "request too large");
+  const maxBytes = 65_536;
+  const declared = Number(request.headers.get("content-length") ?? 0);
+  if (!Number.isFinite(declared) || declared > maxBytes) {
+    throw new RequestError(413, "request too large");
+  }
+  if (!request.body) throw new RequestError(400, "JSON object required");
+  const reader = request.body.getReader();
+  const parts = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel("request too large");
+        throw new RequestError(413, "request too large");
+      }
+      parts.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let index = 0;
+  for (const part of parts) {
+    bytes.set(part, index);
+    index += part.byteLength;
+  }
   let decoded;
-  try { decoded = JSON.parse(raw); }
-  catch { throw new RequestError(400, "invalid JSON"); }
+  try {
+    decoded = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new RequestError(400, "invalid JSON");
+  }
   if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
     throw new RequestError(400, "JSON object required");
   }

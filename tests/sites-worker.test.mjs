@@ -216,3 +216,22 @@ test("Sites D1 worker registers a signed passkey, accepts a post and reauthentic
     assert.equal((await after.json()).authenticated, true);
   } finally { f.close(); }
 });
+
+
+test("Sites request parser rejects oversized bodies and invalid JSON without allocating unbounded input", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const large = await f.post("/api/auth/login/start", {
+      junk: "x".repeat(65_536),
+    });
+    assert.equal(large.status, 413);
+    assert.equal((await large.json()).error, "request too large");
+    const malformed = await f.fetcher("/api/auth/login/start", {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: '{"broken":',
+    });
+    assert.equal(malformed.status, 400);
+  } finally { f.close(); }
+});
