@@ -95,7 +95,10 @@ export class D1Store {
     }
     statements.push(this.p(
       "INSERT INTO passkeys(credential_id,user_id,public_key,counter,transports_json,created_at) VALUES(?,?,?,?,?,?)",
-      credential.id, userId, credential.publicKey, credential.counter,
+      credential.id, userId, credential.publicKey.buffer.slice(
+        credential.publicKey.byteOffset,
+        credential.publicKey.byteOffset + credential.publicKey.byteLength
+      ), credential.counter,
       JSON.stringify(credential.transports ?? []), this.now()
     ));
     await this.db.batch(statements);
@@ -310,8 +313,11 @@ export class D1Store {
     // competing publishers from overwriting one another.
     await this.db.batch([
       this.p(
-        "INSERT OR IGNORE INTO day_config(day,post_strength,same_glyph_mode,min_outbound,rule_override) VALUES(?,?,?,?,1)",
-        day, config.postStrength, config.sameGlyphMode, config.minimumOutgoingInfluence
+        "INSERT INTO day_config(day,post_strength,same_glyph_mode,min_outbound,rule_override) VALUES(?,?,?,?,1) " +
+        "ON CONFLICT(day) DO UPDATE SET post_strength=excluded.post_strength," +
+        "same_glyph_mode=excluded.same_glyph_mode,min_outbound=excluded.min_outbound,rule_override=1 " +
+        "WHERE NOT EXISTS (SELECT 1 FROM snapshots WHERE day=?)",
+        day, config.postStrength, config.sameGlyphMode, config.minimumOutgoingInfluence, day
       ),
       this.p(
         "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
