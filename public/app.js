@@ -341,7 +341,7 @@ byId("modelSelect").addEventListener("change", (event) => {
   buildHistory();
   updatePanels();
   byId("previewMessage").textContent = selected === "legacy"
-    ? "現行の暫定ルールです。N=1は広がらず、同文字の加算は長期増幅します。"
+    ? "従来案の暫定ルールです。N=1は広がらず、同文字の加算は長期増幅します。"
     : selected === "bounded"
     ? "比較用：同文字の最大影響を採用。N=1の投稿はまだ広がりません。"
     : "比較用：N=1からも1マスずつ広がる試験方式。正式採用は未決定です。";
@@ -500,8 +500,8 @@ function activateDemo() {
   frameIndex = 0;
   byId("dayRange").max = String(snapshots.length - 1);
   const toggle = document.getElementById("toggleArchive");
-  if (toggle) toggle.textContent = "公開アーカイブを見る";
-  document.querySelector(".panel-label").textContent = "LIVE SIMULATION / LOCAL DEMO";
+  if (toggle) toggle.textContent = "確定済み履歴を見る";
+  document.querySelector(".panel-label").textContent = "SIMULATION / LOCAL DEMO";
   updatePanels();
 }
 function activateArchive() {
@@ -513,9 +513,9 @@ function activateArchive() {
   byId("dayRange").max = String(snapshots.length - 1);
   const toggle = document.getElementById("toggleArchive");
   if (toggle) toggle.textContent = "デモに戻る";
-  document.querySelector(".panel-label").textContent = "PUBLISHED SNAPSHOTS / DEVELOPMENT DATABASE";
+  document.querySelector(".panel-label").textContent = "VERIFIED DAILY STATES / DEVELOPMENT DATABASE";
   byId("previewMessage").textContent =
-    "公開アーカイブを閲覧中です。仮投稿するとデモ表示へ戻ります。";
+    "日次確定済みの地図履歴を閲覧中です。仮投稿するとデモ表示へ戻ります。";
   updatePanels();
 }
 async function findPublishedArchive() {
@@ -526,7 +526,7 @@ async function findPublishedArchive() {
     button.type = "button";
     button.id = "toggleArchive";
     button.textContent = archive.source === "api"
-      ? "公開アーカイブを見る" : "静的履歴を見る";
+      ? "確定済み履歴を見る" : "静的履歴を見る";
     button.addEventListener("click", () => {
       if (liveMode) activateDemo();
       else activateArchive();

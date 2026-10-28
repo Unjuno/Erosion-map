@@ -97,7 +97,7 @@ async function refresh() {
         ") / 変更 " + state.post.revision + " 回"
       : "投稿なし";
     id("environmentNotice").textContent = status.mode === "sites-d1"
-      ? "ChatGPT SitesのD1データベースに接続中です。投稿とパスキー情報はサーバーに保存されます。"
+      ? "Sites互換のD1バックエンドに接続中です。保存先を確認してください。この表示だけではサイトが一般公開済みとは判断できません。"
       : "ローカル開発用SQLiteバックエンドに接続中です。正式公開環境ではありません。";
   } catch {
     backendAvailable = false;
@@ -149,7 +149,7 @@ id("realPostForm").addEventListener("submit", (event) => {
 });
 id("deleteAccountButton").addEventListener("click", async () => {
   if (!window.confirm(
-    "アカウント、認証情報、受付中の投稿、ログイン状態を削除します。締切済みの匿名投稿と公開済みマップの文字は残ります。続行しますか？"
+    "アカウント、認証情報、受付中の投稿、ログイン状態を削除します。締切済みの匿名投稿と日次確定したマップの文字は残ります。続行しますか？"
   )) return;
   if (window.prompt("最終確認: DELETE と入力してください。", "") !== "DELETE") {
     setMessage("deleteMessage", "削除を取り消しました。");
