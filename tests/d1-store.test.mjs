@@ -12,6 +12,7 @@ async function makeFixture(instant = new Date("2026-10-21T00:00:00.000Z"), optio
   sqlite.exec(await readFile("migrations/0002_day_closure.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0003_closed_post_capture.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0004_archival_and_chunked_states.sql", "utf8"));
+  sqlite.exec(await readFile("migrations/0005_durable_rate_limits.sql", "utf8"));
   const adapt = (parameters) => parameters.map((parameter) =>
     parameter instanceof ArrayBuffer ? new Uint8Array(parameter) : parameter);
   const asD1 = (row) => {
@@ -384,5 +385,21 @@ test("large Unicode map snapshots are stored in small atomic D1 rows and verifie
     f.sqlite.prepare("UPDATE snapshot_chunks SET chunk_data='broken' " +
       "WHERE day=? AND chunk_index=0").run("2026-10-20");
     await assert.rejects(() => f.store.snapshot("2026-10-20"), /checksum/);
+  } finally { f.close(); }
+});
+
+test("D1 rate limits are atomic, bounded and expiring", async () => {
+  const instant = new Date("2026-10-22T00:00:00Z");
+  const f = await makeFixture(instant);
+  try {
+    const results = await Promise.all(Array.from({ length: 9 }, () =>
+      f.store.allowRate("auth-global", "single-test-client", 3, 300_000)));
+    assert.equal(results.filter(Boolean).length, 3);
+    assert.equal(results.filter((allowed) => !allowed).length, 6);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM rate_limits").get().n, 1);
+    instant.setTime(instant.getTime() + 301_000);
+    await f.store.pruneExpirations();
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM rate_limits").get().n, 0);
+    assert.equal(await f.store.allowRate("auth-global", "single-test-client", 3, 300_000), true);
   } finally { f.close(); }
 });
