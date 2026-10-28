@@ -45,6 +45,7 @@ export class Store {
       "CREATE TABLE IF NOT EXISTS posts (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, day TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>=1), x INTEGER NOT NULL, y INTEGER NOT NULL, char TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(user_id,day)) STRICT;",
       "CREATE INDEX IF NOT EXISTS idx_posts_day ON posts(day);",
       "CREATE TABLE IF NOT EXISTS day_config (day TEXT PRIMARY KEY, post_strength INTEGER NOT NULL CHECK(post_strength>=1)) STRICT;",
+      "CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;",
       "CREATE TABLE IF NOT EXISTS snapshots (day TEXT PRIMARY KEY, state_json TEXT NOT NULL, sha256 TEXT NOT NULL, created_at INTEGER NOT NULL) STRICT;",
     ].join("\n"));
     // Migrate development DBs created before rule options were introduced.
@@ -55,6 +56,11 @@ export class Store {
     }
     if (!columns.has("min_outbound")) {
       this.db.exec("ALTER TABLE day_config ADD COLUMN min_outbound INTEGER NOT NULL DEFAULT 0 CHECK(min_outbound IN (0,1))");
+    }
+    if (!columns.has("rule_override")) {
+      this.db.exec("ALTER TABLE day_config ADD COLUMN rule_override INTEGER NOT NULL DEFAULT 0 CHECK(rule_override IN (0,1))");
+      // Preserve explicitly selected non-legacy modes on preexisting databases.
+      this.db.exec("UPDATE day_config SET rule_override=1 WHERE same_glyph_mode!='sum' OR min_outbound!=0");
     }
   }
   close() { this.db.close(); }
@@ -238,12 +244,39 @@ export class Store {
     ).get(day);
     return row ? Number(row.strength) : 1;
   }
+  defaultRules() {
+    const entry = this.db.prepare("SELECT value FROM site_settings WHERE key=?")
+      .get("receiver_default");
+    return entry ? JSON.parse(entry.value) :
+      { sameGlyphMode: "sum", minimumOutgoingInfluence: 0 };
+  }
+  /** Trusted local operator setting for future unpublished days. */
+  setDefaultRules(sameGlyphMode, minimumOutgoingInfluence = 0) {
+    if (!["sum", "max"].includes(sameGlyphMode) ||
+        ![0, 1].includes(minimumOutgoingInfluence) ||
+        (minimumOutgoingInfluence === 1 && sameGlyphMode !== "max")) {
+      throw new RangeError("invalid default erosion rules");
+    }
+    const value = JSON.stringify({ sameGlyphMode, minimumOutgoingInfluence });
+    this.db.prepare(
+      "INSERT INTO site_settings(key,value) VALUES('receiver_default',?) " +
+      "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+    ).run(value);
+  }
   dayRules(day) {
     assertIsoDay(day);
     const row = this.db.prepare(
-      "SELECT post_strength AS postStrength, same_glyph_mode AS sameGlyphMode, min_outbound AS minimumOutgoingInfluence FROM day_config WHERE day=?"
+      "SELECT post_strength AS postStrength, same_glyph_mode AS sameGlyphMode, " +
+      "min_outbound AS minimumOutgoingInfluence,rule_override AS ruleOverride " +
+      "FROM day_config WHERE day=?"
     ).get(day);
-    return row ? { ...row } : { postStrength: 1, sameGlyphMode: "sum", minimumOutgoingInfluence: 0 };
+    const defaults = this.defaultRules();
+    return {
+      postStrength: row ? Number(row.postStrength) : 1,
+      sameGlyphMode: row?.ruleOverride === 1 ? row.sameGlyphMode : defaults.sameGlyphMode,
+      minimumOutgoingInfluence: row?.ruleOverride === 1 ?
+        Number(row.minimumOutgoingInfluence) : defaults.minimumOutgoingInfluence,
+    };
   }
   /** Trusted operator-only setting, never exposed on public routes. */
   setDayRules(day, sameGlyphMode, minimumOutgoingInfluence = 0) {
@@ -257,8 +290,8 @@ export class Store {
     try {
       if (this.snapshot(day)) throw new Error("published day is immutable");
       this.db.prepare(
-        "INSERT INTO day_config(day,post_strength,same_glyph_mode,min_outbound) VALUES(?,1,?,?) " +
-        "ON CONFLICT(day) DO UPDATE SET same_glyph_mode=excluded.same_glyph_mode,min_outbound=excluded.min_outbound"
+        "INSERT INTO day_config(day,post_strength,same_glyph_mode,min_outbound,rule_override) VALUES(?,1,?,?,1) " +
+        "ON CONFLICT(day) DO UPDATE SET same_glyph_mode=excluded.same_glyph_mode,min_outbound=excluded.min_outbound,rule_override=1"
       ).run(day, sameGlyphMode, minimumOutgoingInfluence);
       this.db.exec("COMMIT");
     } catch (error) {
@@ -341,10 +374,18 @@ export class Store {
       if (nextIsoDay(latest.date) !== day) {
         throw new RangeError("cannot skip days or publish out of order");
       }
+      const rules = this.dayRules(day);
       const next = buildDailySnapshot(latest, this.dailyPosts(day), {
-        date: day, ...this.dayRules(day),
+        date: day, ...rules,
         registeredUserCount: this.usersCount(),
       });
+      // Freeze the *effective* rule set alongside the immutable state so a
+      // later change to site defaults cannot silently reinterpret history.
+      this.db.prepare(
+        "INSERT INTO day_config(day,post_strength,same_glyph_mode,min_outbound,rule_override) VALUES(?,?,?,?,1) " +
+        "ON CONFLICT(day) DO UPDATE SET post_strength=excluded.post_strength," +
+        "same_glyph_mode=excluded.same_glyph_mode,min_outbound=excluded.min_outbound,rule_override=1"
+      ).run(day,rules.postStrength,rules.sameGlyphMode,rules.minimumOutgoingInfluence);
       const encoded = JSON.stringify(next);
       this.db.prepare("INSERT INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)")
         .run(day, encoded, sha(encoded), nowMs());

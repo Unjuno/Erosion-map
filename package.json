@@ -13,7 +13,8 @@
     "job": "npm run build && node scripts/daily-job.mjs",
     "export:states": "npm run build:site && node scripts/export-states.mjs",
     "backup": "npm run build && node scripts/backup-db.mjs",
-    "configure:day": "npm run build && node scripts/configure-day.mjs"
+    "configure:day": "npm run build && node scripts/configure-day.mjs",
+    "configure:defaults": "npm run build && node scripts/configure-defaults.mjs"
   },
   "devDependencies": {
     "typescript": "5.8.3"
