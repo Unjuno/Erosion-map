@@ -9,17 +9,19 @@ async function makeFixture(instant = new Date("2026-10-21T00:00:00.000Z")) {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON");
   sqlite.exec(await readFile("migrations/0001_d1_schema.sql", "utf8"));
+  const adapt = (parameters) => parameters.map((parameter) =>
+    parameter instanceof ArrayBuffer ? new Uint8Array(parameter) : parameter);
   const statement = (sql, parameters = []) => ({
     sql, parameters,
     bind(...next) { return statement(sql, next); },
     async first() {
-      return sqlite.prepare(sql).get(...parameters) ?? null;
+      return sqlite.prepare(sql).get(...adapt(parameters)) ?? null;
     },
     async all() {
-      return { results: sqlite.prepare(sql).all(...parameters) };
+      return { results: sqlite.prepare(sql).all(...adapt(parameters)) };
     },
     async run() {
-      const results = sqlite.prepare(sql).run(...parameters);
+      const results = sqlite.prepare(sql).run(...adapt(parameters));
       return { success: true, meta: { changes: Number(results.changes) } };
     },
   });
