@@ -53,3 +53,12 @@ test("preview posts can be inserted into day two and recomputed", () => {
   assert.deepEqual(withPost.cells.find((c) => c.x === 21 && c.y === 20),
     { x: 21, y: 20, char: "星", n: 2 });
 });
+
+
+test("the map exposes three explicitly labeled, user-visible simulation models", async () => {
+  const html = await readFile(join("site", "index.html"), "utf8");
+  assert.match(html, /id="modelSelect"/);
+  for(const name of ["legacy","bounded","playable"]) {
+    assert.ok(html.includes('value="'+name+'"'), name);
+  }
+});

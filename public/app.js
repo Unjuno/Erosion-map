@@ -29,6 +29,13 @@ let viewY = 0;
 let zoom = window.innerWidth < 600 ? 0.75 : 1.3;
 let previewPost = null;
 let previewStrength = 1;
+let selectedModel = "legacy";
+const modelRules = Object.freeze({
+  legacy: Object.freeze({ sameGlyphMode: "sum", minimumOutgoingInfluence: 0 }),
+  bounded: Object.freeze({ sameGlyphMode: "max", minimumOutgoingInfluence: 0 }),
+  playable: Object.freeze({ sameGlyphMode: "max", minimumOutgoingInfluence: 1 }),
+});
+const currentRules = () => modelRules[selectedModel];
 let playback = null;
 let activePointer = null;
 let renderPending = false;
@@ -58,9 +65,9 @@ function buildHistory() {
     const date = nextIsoDay(previous.date);
     const updated = day === 1 && previewPost !== null
       ? buildDailySnapshot(previous, [previewPost], {
-          date, postStrength: previewStrength,
+          date, postStrength: previewStrength, ...currentRules(),
         })
-      : advanceOneDay(previous, date);
+      : advanceOneDay(previous, date, currentRules());
     snapshots.push(updated);
   }
   demoSnapshots = snapshots;
@@ -323,6 +330,21 @@ function navigateTo(x, y) {
   return true;
 }
 
+byId("modelSelect").addEventListener("change", (event) => {
+  const selected = event.currentTarget.value;
+  if (!Object.hasOwn(modelRules, selected)) return;
+  stopPlayback();
+  if (liveMode) activateDemo();
+  selectedModel = selected;
+  frameIndex = 0;
+  buildHistory();
+  updatePanels();
+  byId("previewMessage").textContent = selected === "legacy"
+    ? "現行の暫定ルールです。N=1は広がらず、同文字の加算は長期増幅します。"
+    : selected === "bounded"
+    ? "比較用：同文字の最大影響を採用。N=1の投稿はまだ広がりません。"
+    : "比較用：N=1からも1マスずつ広がる試験方式。正式採用は未決定です。";
+});
 byId("zoomIn").addEventListener("click", () => zoomAt(1.4));
 byId("zoomOut").addEventListener("click", () => zoomAt(1 / 1.4));
 byId("fitMap").addEventListener("click", fitWorld);

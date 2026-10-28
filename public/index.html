@@ -63,6 +63,13 @@
                 <button id="zoomIn" type="button" aria-label="拡大">＋</button>
                 <button id="fitMap" type="button">全域表示</button>
               </div>
+              <label class="rule-selector" for="modelSelect">計算方式
+                <select id="modelSelect" aria-label="侵食ルール比較">
+                  <option value="legacy">現行：同文字を加算（N=1停止）</option>
+                  <option value="bounded">比較：最大影響を採用（N=1停止）</option>
+                  <option value="playable">試験：最大影響＋N=1も拡大</option>
+                </select>
+              </label>
               <form id="goForm" class="coordinate-form">
                 <label for="goX">X</label>
                 <input id="goX" name="x" type="number" value="0" step="1" required>
