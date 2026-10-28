@@ -349,10 +349,18 @@ test("scheduled Sites catch-up bounds daily D1 work and validates overrides", as
       rulesDefault: { sameGlyphMode: "max", minimumOutgoingInfluence: 1 },
     });
     await store.initialize(new Date("2026-10-20T12:00:00Z"));
+    let queries = 0;
+    const originalPrepare = f.env.DB.prepare.bind(f.env.DB);
+    f.env.DB.prepare = (sql) => {
+      queries++;
+      return originalPrepare(sql);
+    };
     f.env.MAX_CATCHUP_DAYS = "2";
     let pending;
     await worker.scheduled({}, f.env, { waitUntil: promise => { pending = promise; } });
     await pending;
+    assert.ok(queries <= 50,
+      "two-day typical catch-up must fit a 50-query D1 invocation budget");
     const days = f.sqlite.prepare("SELECT day FROM snapshots ORDER BY day").all();
     assert.deepEqual(days.map(x => x.day),
       ["2026-10-19", "2026-10-20", "2026-10-21"]);
