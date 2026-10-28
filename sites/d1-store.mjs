@@ -1,0 +1,341 @@
+/**
+ * Asynchronous D1 persistence adapter for ChatGPT Sites-compatible workers.
+ *
+ * The migration in migrations/0001_d1_schema.sql must be applied before use.
+ * Public routes must authenticate sessions themselves; do not expose
+ * createUser, submit, or publishing methods to anonymous calls.
+ */
+import { buildDailySnapshot } from "../dist/daily.js";
+import { boundsForUserCount, normalizeGlyph } from "../dist/engine.js";
+import { assertIsoDay, dayAtInstant, nextIsoDay } from "../dist/calendar.js";
+
+const encoder = new TextEncoder();
+export async function hashText(value) {
+  const bytes = encoder.encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((n) => n.toString(16).padStart(2, "0")).join("");
+}
+function safeUser(id) {
+  if (typeof id !== "string" || !/^[A-Za-z0-9._~-]{1,128}$/.test(id)) {
+    throw new RangeError("invalid user ID");
+  }
+}
+function safeHash(value) {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new RangeError("invalid token digest");
+  }
+}
+function safeInt(value, name, minimum = Number.MIN_SAFE_INTEGER) {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new RangeError(name + " must be an integer >= " + minimum);
+  }
+}
+function previousDay(day) {
+  assertIsoDay(day);
+  const time = Date.parse(day + "T00:00:00.000Z") - 86_400_000;
+  if (!Number.isFinite(time)) throw new RangeError("invalid previous day");
+  return new Date(time).toISOString().slice(0, 10);
+}
+function decodeCredential(row) {
+  if (!row) return null;
+  let key;
+  if (row.publicKey instanceof ArrayBuffer) key = new Uint8Array(row.publicKey);
+  else if (row.publicKey instanceof Uint8Array) key = new Uint8Array(row.publicKey);
+  else throw new Error("unexpected passkey key encoding");
+  return {
+    id: row.id, userId: row.userId, publicKey: key,
+    counter: Number(row.counter), transports: JSON.parse(row.transportsJson),
+  };
+}
+
+/**
+ * D1 prepared statements (.bind().first()/all()/run()) only.
+ * Cloudflare D1 batch is atomic for grouped writes.
+ */
+export class D1Store {
+  constructor(db, options = {}) {
+    if (!db || typeof db.prepare !== "function" || typeof db.batch !== "function") {
+      throw new TypeError("a D1 binding with prepare/batch is required");
+    }
+    this.db = db;
+    this.clock = options.clock ?? (() => new Date());
+    this.rulesDefault = options.rulesDefault ?? {
+      sameGlyphMode: "sum", minimumOutgoingInfluence: 0,
+    };
+  }
+  p(sql, ...params) { return this.db.prepare(sql).bind(...params); }
+  async first(sql, ...params) { return this.p(sql, ...params).first(); }
+  async all(sql, ...params) {
+    const found = await this.p(sql, ...params).all();
+    return found.results ?? [];
+  }
+  async run(sql, ...params) { return this.p(sql, ...params).run(); }
+  now() { return this.clock().getTime(); }
+  async usersCount() {
+    return Number((await this.first("SELECT COUNT(*) AS total FROM users")).total);
+  }
+  async hasUser(userId) {
+    safeUser(userId);
+    return !!(await this.first("SELECT 1 AS present FROM users WHERE id=?", userId));
+  }
+  async registerCredential(userId, credential, newUser = false) {
+    safeUser(userId);
+    if (!credential || typeof credential.id !== "string" ||
+        credential.id.length < 1 || credential.id.length > 2048 ||
+        !(credential.publicKey instanceof Uint8Array) ||
+        !Number.isSafeInteger(credential.counter) || credential.counter < 0) {
+      throw new RangeError("invalid passkey credential");
+    }
+    const statements = [];
+    if (newUser) {
+      statements.push(this.p("INSERT INTO users(id,created_at) VALUES(?,?)",
+        userId, this.now()));
+    } else if (!(await this.hasUser(userId))) {
+      throw new RangeError("user not found");
+    }
+    statements.push(this.p(
+      "INSERT INTO passkeys(credential_id,user_id,public_key,counter,transports_json,created_at) VALUES(?,?,?,?,?,?)",
+      credential.id, userId, credential.publicKey, credential.counter,
+      JSON.stringify(credential.transports ?? []), this.now()
+    ));
+    await this.db.batch(statements);
+  }
+  async credentialById(id) {
+    if (typeof id !== "string" || id.length < 1 || id.length > 2048) return null;
+    return decodeCredential(await this.first(
+      "SELECT credential_id AS id,user_id AS userId,public_key AS publicKey,counter,transports_json AS transportsJson FROM passkeys WHERE credential_id=?",
+      id
+    ));
+  }
+  async credentialsByUser(userId) {
+    safeUser(userId);
+    const rows = await this.all(
+      "SELECT credential_id AS id,user_id AS userId,public_key AS publicKey,counter,transports_json AS transportsJson FROM passkeys WHERE user_id=? ORDER BY created_at",
+      userId
+    );
+    return rows.map(decodeCredential);
+  }
+  async updateCounter(id, previousCounter, nextCounter) {
+    safeInt(previousCounter, "previousCounter", 0);
+    safeInt(nextCounter, "nextCounter", 0);
+    const result = await this.run(
+      "UPDATE passkeys SET counter=? WHERE credential_id=? AND counter=?",
+      nextCounter, id, previousCounter
+    );
+    if (result.meta?.changes !== 1) throw new Error("passkey counter raced");
+  }
+  async deleteUser(userId) {
+    safeUser(userId);
+    const statements = [
+      this.p("DELETE FROM challenges WHERE user_id=?", userId),
+      this.p("DELETE FROM users WHERE id=?", userId),
+    ];
+    const changed = await this.db.batch(statements);
+    if (changed[1].meta?.changes !== 1) throw new RangeError("account not found");
+  }
+  async issueChallenge(tokenHash, kind, challenge, userId = null, ttl = 300_000) {
+    safeHash(tokenHash);
+    if (userId !== null) safeUser(userId);
+    if (!["register", "authenticate"].includes(kind) ||
+        typeof challenge !== "string" || challenge.length < 32 ||
+        !Number.isSafeInteger(ttl) || ttl < 1 || ttl > 300_000) {
+      throw new RangeError("invalid challenge");
+    }
+    await this.run(
+      "INSERT INTO challenges(token_hash,kind,challenge,user_id,expires_at) VALUES(?,?,?,?,?)",
+      tokenHash, kind, challenge, userId, this.now() + ttl
+    );
+  }
+  async consumeChallenge(tokenHash, kind) {
+    safeHash(tokenHash);
+    const result = await this.first(
+      "DELETE FROM challenges WHERE token_hash=? RETURNING kind,challenge,user_id AS userId,expires_at AS expiresAt",
+      tokenHash
+    );
+    return result && result.kind === kind && result.expiresAt > this.now()
+      ? result : null;
+  }
+  async issueSession(tokenHash, userId, ttlMs = 7 * 86_400_000) {
+    safeHash(tokenHash);
+    safeUser(userId);
+    await this.run(
+      "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+      tokenHash, userId, this.now() + ttlMs
+    );
+  }
+  async userForSession(tokenHash) {
+    if (typeof tokenHash !== "string" || !/^[a-f0-9]{64}$/.test(tokenHash)) return null;
+    const row = await this.first(
+      "SELECT user_id AS userId,expires_at AS expiresAt FROM sessions WHERE token_hash=?",
+      tokenHash
+    );
+    return row && row.expiresAt > this.now() ? row.userId : null;
+  }
+  async revokeSession(tokenHash) {
+    if (typeof tokenHash === "string" && /^[a-f0-9]{64}$/.test(tokenHash)) {
+      await this.run("DELETE FROM sessions WHERE token_hash=?", tokenHash);
+    }
+  }
+  async pruneExpirations() {
+    const now = this.now();
+    await this.db.batch([
+      this.p("DELETE FROM sessions WHERE expires_at<=?", now),
+      this.p("DELETE FROM challenges WHERE expires_at<=?", now),
+    ]);
+  }
+  async decodeState(row, day) {
+    if (!row) return null;
+    const hash = await hashText(row.state_json);
+    if (hash !== row.sha256) throw new Error("published snapshot checksum mismatch");
+    const state = JSON.parse(row.state_json);
+    if (!state || !Array.isArray(state.cells) || !state.bounds || state.date !== day) {
+      throw new Error("published snapshot format mismatch");
+    }
+    return state;
+  }
+  async latestState() {
+    const row = await this.first(
+      "SELECT day,state_json,sha256 FROM snapshots ORDER BY day DESC LIMIT 1"
+    );
+    return row ? this.decodeState(row, row.day) : null;
+  }
+  async snapshot(day) {
+    assertIsoDay(day);
+    const row = await this.first(
+      "SELECT state_json,sha256 FROM snapshots WHERE day=?", day
+    );
+    return row ? { state: await this.decodeState(row, day), sha256: row.sha256 } : null;
+  }
+  async days(limit = 90) {
+    safeInt(limit, "limit", 1);
+    if (limit > 3650) throw new RangeError("limit too large");
+    return this.all(
+      "SELECT day,sha256 FROM snapshots ORDER BY day DESC LIMIT ?", limit
+    );
+  }
+  async initialize(instant = this.clock()) {
+    const existing = await this.latestState();
+    if (existing) return existing;
+    const day = previousDay(dayAtInstant(instant));
+    const state = {
+      date: day, bounds: boundsForUserCount(await this.usersCount()), cells: [],
+    };
+    const text = JSON.stringify(state);
+    await this.run(
+      "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+      day, text, await hashText(text), this.now()
+    );
+    return (await this.snapshot(day)).state;
+  }
+  async defaultRules() {
+    const row = await this.first(
+      "SELECT value FROM site_settings WHERE key='receiver_default'"
+    );
+    return row ? JSON.parse(row.value) : this.rulesDefault;
+  }
+  async dayRules(day) {
+    assertIsoDay(day);
+    const row = await this.first(
+      "SELECT post_strength AS postStrength, same_glyph_mode AS sameGlyphMode, " +
+      "min_outbound AS minimumOutgoingInfluence,rule_override AS ruleOverride " +
+      "FROM day_config WHERE day=?", day
+    );
+    const defaults = await this.defaultRules();
+    return {
+      postStrength: row ? Number(row.postStrength) : 1,
+      sameGlyphMode: row?.ruleOverride === 1 ? row.sameGlyphMode : defaults.sameGlyphMode,
+      minimumOutgoingInfluence: row?.ruleOverride === 1
+        ? Number(row.minimumOutgoingInfluence) : defaults.minimumOutgoingInfluence,
+    };
+  }
+  async submit(userId, day, x, y, char) {
+    safeUser(userId);
+    assertIsoDay(day);
+    safeInt(x, "x");
+    safeInt(y, "y");
+    const glyph = normalizeGlyph(char);
+    const base = boundsForUserCount(await this.usersCount());
+    const prior = await this.latestState();
+    const bounds = prior?.bounds ?? base;
+    const minX = Math.min(bounds.minX, base.minX);
+    const minY = Math.min(bounds.minY, base.minY);
+    const maxX = Math.max(bounds.maxX, base.maxX);
+    const maxY = Math.max(bounds.maxY, base.maxY);
+    if (x < minX || x > maxX || y < minY || y > maxY) {
+      throw new RangeError("post lies outside the active map");
+    }
+    if (await this.snapshot(day)) throw new Error("day already published");
+    const row = await this.first(
+      "INSERT INTO posts(user_id,day,revision,x,y,char,updated_at) VALUES(?,?,1,?,?,?,?) " +
+      "ON CONFLICT(user_id,day) DO UPDATE SET revision=posts.revision+1, " +
+      "x=excluded.x, y=excluded.y, char=excluded.char, updated_at=excluded.updated_at " +
+      "RETURNING revision",
+      userId, day, x, y, glyph, this.now()
+    );
+    return { revision: Number(row.revision), day, x, y, char: glyph };
+  }
+  async currentPost(userId, day) {
+    safeUser(userId);
+    assertIsoDay(day);
+    return await this.first(
+      "SELECT day,revision,x,y,char FROM posts WHERE user_id=? AND day=?",
+      userId, day
+    ) ?? null;
+  }
+  async dailyPosts(day) {
+    assertIsoDay(day);
+    return this.all(
+      "SELECT user_id AS userId,day AS date,revision,x,y,char FROM posts WHERE day=? ORDER BY user_id",
+      day
+    );
+  }
+  async publishDay(day, instant = this.clock()) {
+    assertIsoDay(day);
+    const today = dayAtInstant(instant);
+    if (day >= today) throw new RangeError("cannot publish an open day");
+    const existing = await this.snapshot(day);
+    if (existing) return { state: existing.state, existed: true };
+    const previous = await this.latestState();
+    if (!previous) throw new Error("database must be initialized");
+    if (nextIsoDay(previous.date) !== day) {
+      throw new RangeError("daily snapshots must be published in sequence");
+    }
+    const config = await this.dayRules(day);
+    const next = buildDailySnapshot(previous, await this.dailyPosts(day), {
+      date: day, ...config, registeredUserCount: await this.usersCount(),
+    });
+    const serialized = JSON.stringify(next);
+    const digest = await hashText(serialized);
+    // D1 batch is a transaction. The immutable unique day key prevents
+    // competing publishers from overwriting one another.
+    await this.db.batch([
+      this.p(
+        "INSERT OR IGNORE INTO day_config(day,post_strength,same_glyph_mode,min_outbound,rule_override) VALUES(?,?,?,?,1)",
+        day, config.postStrength, config.sameGlyphMode, config.minimumOutgoingInfluence
+      ),
+      this.p(
+        "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+        day, serialized, digest, this.now()
+      ),
+    ]);
+    const stored = await this.snapshot(day);
+    if (!stored) throw new Error("snapshot write was not committed");
+    return { state: stored.state, existed: stored.sha256 !== digest };
+  }
+  async publishClosedDays(instant = this.clock(), maxDays = 32) {
+    safeInt(maxDays, "maxDays", 1);
+    if (maxDays > 366) throw new RangeError("maxDays cannot exceed 366");
+    const today = dayAtInstant(instant);
+    let current = await this.latestState();
+    if (!current) current = await this.initialize(instant);
+    const output = [];
+    for (let i = 0; i < maxDays; i++) {
+      const next = nextIsoDay(current.date);
+      if (next >= today) break;
+      const result = await this.publishDay(next, instant);
+      current = result.state;
+      output.push({ date: next, cells: current.cells.length, existed: result.existed });
+    }
+    return output;
+  }
+}
