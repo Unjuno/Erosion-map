@@ -215,11 +215,33 @@ export class D1Store {
       await this.run("DELETE FROM sessions WHERE token_hash=?", tokenHash);
     }
   }
+  /**
+   * Fixed-window rate limiting is atomic at the database, not a worker-local
+   * Map. Caller supplies a pseudonymous key, never a raw IP address.
+   */
+  async allowRate(scope, clientKey, maximum, windowMs = 300_000) {
+    if (typeof scope !== "string" || !/^[a-z-]{1,40}$/.test(scope) ||
+        typeof clientKey !== "string" || clientKey.length < 1 ||
+        clientKey.length > 256) throw new RangeError("invalid rate key");
+    safeInt(maximum, "maximum", 1);
+    safeInt(windowMs, "windowMs", 1);
+    const windowNumber = Math.floor(this.now() / windowMs);
+    const bucket = await hashText(scope + ":" + clientKey + ":" + windowNumber);
+    const end = (windowNumber + 1) * windowMs;
+    const row = await this.first(
+      "INSERT INTO rate_limits(bucket_hash,window_end,attempts) VALUES(?,?,1) " +
+      "ON CONFLICT(bucket_hash) DO UPDATE SET attempts=rate_limits.attempts+1 " +
+      "WHERE rate_limits.attempts<? RETURNING attempts",
+      bucket, end, maximum
+    );
+    return row !== null;
+  }
   async pruneExpirations() {
     const now = this.now();
     await this.db.batch([
       this.p("DELETE FROM sessions WHERE expires_at<=?", now),
       this.p("DELETE FROM challenges WHERE expires_at<=?", now),
+      this.p("DELETE FROM rate_limits WHERE window_end<=?", now),
     ]);
   }
   async decodeState(row, day) {
