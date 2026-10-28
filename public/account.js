@@ -80,6 +80,8 @@ function enableButtons() {
   id("loginButton").disabled = !backendAvailable || !supportsWebAuthn;
   id("logoutButton").disabled = !backendAvailable || !activeUser;
   id("realSubmit").disabled = !backendAvailable || !activeUser;
+  id("deleteAccountButton").disabled = !backendAvailable || !activeUser ||
+    typeof navigator.credentials?.get !== "function";
 }
 async function refresh() {
   try {
@@ -141,6 +143,25 @@ id("realPostForm").addEventListener("submit", (event) => {
       x: Number(id("realX").value),
       y: Number(id("realY").value),
       char: id("realChar").value,
+    });
+  });
+});
+id("deleteAccountButton").addEventListener("click", async () => {
+  if (!window.confirm(
+    "アカウント、認証情報、未確定投稿、ログイン状態を削除します。公開済みマップの文字は残ります。続行しますか？"
+  )) return;
+  if (window.prompt("最終確認: DELETE と入力してください。", "") !== "DELETE") {
+    setMessage("deleteMessage", "削除を取り消しました。");
+    return;
+  }
+  await act("deleteMessage", async () => {
+    const start = await api("/api/account/delete/start", {});
+    const assertion = await navigator.credentials.get({
+      publicKey: authenticationOptions(start.options),
+    });
+    if (!assertion) throw new Error("再認証がキャンセルされました。");
+    await api("/api/account/delete/finish", {
+      confirm: "DELETE", credential: authenticationJSON(assertion),
     });
   });
 });

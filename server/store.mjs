@@ -104,6 +104,20 @@ export class Store {
       counter: Number(row.counter), transports: JSON.parse(row.transportsJson),
     }));
   }
+  /** Verified account erasure: public anonymous snapshots remain immutable. */
+  deleteUser(userId) {
+    checkUserID(userId);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM challenges WHERE user_id=?").run(userId);
+      const changed = this.db.prepare("DELETE FROM users WHERE id=?").run(userId);
+      if (changed.changes !== 1) throw new RangeError("account does not exist");
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
   updateCounter(id, previousCounter, nextCounter) {
     for (const value of [previousCounter, nextCounter]) {
       if (!Number.isSafeInteger(value) || value < 0) throw new RangeError("invalid counter");

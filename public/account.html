@@ -54,6 +54,13 @@
           <div class="account-state"><span>同日の現行投稿</span><strong id="currentPost">—</strong></div>
         </section>
       </div>
+      <section class="side-card" aria-labelledby="deleteHeading" style="margin-top:22px">
+        <div class="side-heading"><span>03 / ACCOUNT</span><span class="side-mini">PRIVACY</span></div>
+        <h2 id="deleteHeading">アカウントの削除</h2>
+        <p class="account-warning">削除にはパスキーでの再認証が必要です。登録情報・ログイン状態・未確定の投稿は消去されますが、過去の匿名公開マップは残ります。この操作は元に戻せません。</p>
+        <button type="button" id="deleteAccountButton" class="danger-button" disabled>アカウントを削除</button>
+        <p id="deleteMessage" class="account-feedback" role="status"></p>
+      </section>
       <p class="account-warning">本ページはWebAuthnの開発用実装です。公開環境ではドメイン・HTTPS・DB・バックアップ・負荷制限・アカウント復旧の運用検証が必要です。すべてのパスキーを失うと復旧できない可能性があります。</p>
     </main>
     <footer><span>EROSION MAP / PASSKEY</span><a href="./">← マップへ戻る</a></footer>

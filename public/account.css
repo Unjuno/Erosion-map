@@ -17,3 +17,7 @@
 .account-feedback{min-height:26px;color:var(--accent);font-size:12px;line-height:1.65}
 .account-warning{font-size:11px;line-height:1.9;color:#97aaad;margin-top:30px}
 @media(max-width:720px){.account-grid{grid-template-columns:1fr}.account-main{padding:45px 0 70px}}
+
+.danger-button{border:1px solid #986b6e;background:#38252b;color:#fff0ee;min-height:42px;padding:0 16px;font-size:12px;cursor:pointer}
+.danger-button:not(:disabled):hover{background:#56343a}
+.danger-button:disabled{opacity:.5;cursor:not-allowed}

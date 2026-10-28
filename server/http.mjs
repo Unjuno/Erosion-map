@@ -139,6 +139,35 @@ export function createApplication({
     return setCookie("erosion_session", token, secure, 7 * 86400);
   };
   const clearPending = () => setCookie("erosion_challenge", "", secure, 0);
+  const verifyAssertion = async (payload, pending, expectedUserId = null) => {
+    const credential = store.credentialById(payload.credential?.id);
+    if (!credential) throw new HTTPError(400, "unknown passkey");
+    if (expectedUserId !== null && credential.userId !== expectedUserId) {
+      throw new HTTPError(400, "passkey does not belong to this account");
+    }
+    const handle = payload.credential?.response?.userHandle;
+    if (handle !== null && handle !== undefined &&
+        (typeof handle !== "string" || !/^[A-Za-z0-9_-]+$/.test(handle) ||
+        !Buffer.from(handle, "base64url")
+          .equals(Buffer.from(credential.userId, "utf8")))) {
+      throw new HTTPError(400, "passkey user handle mismatch");
+    }
+    const verified = await verifyPasskeyInput(() => verifyAuthenticationResponse({
+      response: payload.credential, expectedChallenge: pending.challenge,
+      expectedOrigin, expectedRPID: rpID,
+      credential: {
+        id: credential.id, publicKey: credential.publicKey,
+        counter: credential.counter, transports: credential.transports,
+      },
+      requireUserVerification: true,
+    }));
+    if (!verified.verified || !verified.authenticationInfo) {
+      throw new HTTPError(400, "authentication verification failed");
+    }
+    store.updateCounter(credential.id, credential.counter,
+      verified.authenticationInfo.newCounter);
+    return credential.userId;
+  };
 
   return createServer(async (req, res) => {
     try {
@@ -255,41 +284,50 @@ export function createApplication({
         if (path === "/api/auth/login/finish" && method === "POST") {
           const payload = await readJSON(req);
           const pending = pendingChallenge(req, "authenticate");
-          const credential = store.credentialById(payload.credential?.id);
-          if (!credential) throw new HTTPError(400, "unknown passkey");
-          // A discoverable credential's userHandle, when present, must identify
-          // the owner of the verified credential ID. Do not trust client names.
-          const providedHandle = payload.credential?.response?.userHandle;
-          if (providedHandle !== null && providedHandle !== undefined) {
-            if (typeof providedHandle !== "string" ||
-                !/^[A-Za-z0-9_-]+$/.test(providedHandle) ||
-                !Buffer.from(providedHandle, "base64url")
-                  .equals(Buffer.from(credential.userId, "utf8"))) {
-              throw new HTTPError(400, "passkey user handle mismatch");
-            }
+          if (pending.userId !== null) {
+            throw new HTTPError(400, "challenge is bound to a different operation");
           }
-          const checked = await verifyPasskeyInput(() => verifyAuthenticationResponse({
-            response: payload.credential,
-            expectedChallenge: pending.challenge,
-            expectedOrigin,
-            expectedRPID: rpID,
-            credential: {
-              id: credential.id,
-              publicKey: credential.publicKey,
-              counter: credential.counter,
-              transports: credential.transports,
-            },
-            requireUserVerification: true,
-          }));
-          if (!checked.verified || !checked.authenticationInfo) {
-            throw new HTTPError(400, "authentication verification failed");
-          }
-          store.updateCounter(credential.id, credential.counter,
-            checked.authenticationInfo.newCounter);
+          const authenticatedUser = await verifyAssertion(payload, pending);
           const old = parseCookies(req.headers.cookie).get("erosion_session");
-          const cookie = mintSession(credential.userId, old);
+          const cookie = mintSession(authenticatedUser, old);
           json(res, 200, { authenticated: true }, {
             "Set-Cookie": [clearPending(), cookie],
+          });
+          return;
+        }
+        if (path === "/api/account/delete/start" && method === "POST") {
+          const userId = requireUser(req);
+          await readJSON(req);
+          const options = await generateAuthenticationOptions({
+            rpID, userVerification: "required",
+            allowCredentials: store.credentialsByUser(userId).map((credential) => ({
+              id: credential.id, transports: credential.transports,
+            })),
+          });
+          const token = randomToken();
+          store.issueChallenge(hash(token), "authenticate", options.challenge, userId);
+          json(res, 200, { options }, {
+            "Set-Cookie": setCookie("erosion_challenge", token, secure, 300),
+          });
+          return;
+        }
+        if (path === "/api/account/delete/finish" && method === "POST") {
+          const userId = requireUser(req);
+          const payload = await readJSON(req);
+          if (payload.confirm !== "DELETE") {
+            throw new HTTPError(400, "explicit deletion confirmation required");
+          }
+          const pending = pendingChallenge(req, "authenticate");
+          if (pending.userId !== userId) {
+            throw new HTTPError(400, "challenge is not bound to this account");
+          }
+          await verifyAssertion(payload, pending, userId);
+          store.deleteUser(userId);
+          json(res, 200, { deleted: true }, {
+            "Set-Cookie": [
+              clearPending(),
+              setCookie("erosion_session", "", secure, 0),
+            ],
           });
           return;
         }
