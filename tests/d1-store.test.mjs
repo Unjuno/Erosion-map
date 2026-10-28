@@ -360,11 +360,15 @@ test("large Unicode map snapshots are stored in small atomic D1 rows and verifie
   try {
     await f.store.initialize(new Date("2026-10-20T12:00:00.000Z"));
     const glyph = "a" + "\u035c".repeat(31); // One long grapheme, maximum accepted length.
+    const other = "b" + "\u035c".repeat(31);
     const previous = {
       date: "2026-10-19",
       bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
       cells: Array.from({ length: 21_000 }, (_, i) => ({
-        x: i % 200, y: Math.floor(i / 200), char: glyph, n: 1,
+        x: i % 200, y: Math.floor(i / 200),
+        // Alternating glyphs along each column prevent RLE compression,
+        // exercising the existing chunk fallback on >2MB JSON.
+        char: Math.floor(i / 200) % 2 === 0 ? glyph : other, n: 1,
       })),
     };
     const initialDigest = await hashText(JSON.stringify(previous));
@@ -376,7 +380,7 @@ test("large Unicode map snapshots are stored in small atomic D1 rows and verifie
       ? { state: previous, sha256: initialDigest } : trueSnapshot(day);
     await f.store.run("INSERT INTO site_settings(key,value) VALUES(?,?)",
       "receiver_default", JSON.stringify({
-        sameGlyphMode: "max", minimumOutgoingInfluence: 1,
+        sameGlyphMode: "max", minimumOutgoingInfluence: 0,
       }));
     const saved = await f.store.publishDay("2026-10-20");
     assert.ok(Buffer.byteLength(JSON.stringify(saved.state), "utf8") > 2_000_000);
@@ -416,3 +420,46 @@ test("D1 rate limits are atomic, bounded and expiring", async () => {
     assert.equal(await f.store.allowRate("auth-global", "single-test-client", 3, 300_000), true);
   } finally { f.close(); }
 });
+
+test("large same-glyph snapshots are stored losslessly with small column runs", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00.000Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00.000Z"));
+    // 60k cells, more than 2MB uncompressed, but each x-column is one run.
+    const previous = {
+      date: "2026-10-19",
+      bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
+      cells: Array.from({ length: 60_000 }, (_, i) => ({
+        x: i % 200, y: Math.floor(i / 200), char: "森", n: 1,
+      })),
+    };
+    const digest = await hashText(JSON.stringify(previous));
+    const actualSnapshot = f.store.snapshot.bind(f.store);
+    f.store.latestState = async () => previous;
+    f.store.snapshot = async (day) => day === previous.date
+      ? { state: previous, sha256: digest } : actualSnapshot(day);
+    await f.store.run("INSERT INTO site_settings(key,value) VALUES(?,?)",
+      "receiver_default", JSON.stringify({
+        sameGlyphMode: "max", minimumOutgoingInfluence: 0,
+      }));
+    const published = await f.store.publishDay("2026-10-20");
+    const original = JSON.stringify(published.state);
+    assert.ok(Buffer.byteLength(original, "utf8") > 2_000_000);
+    const stored = f.sqlite.prepare(
+      "SELECT state_json AS data FROM snapshots WHERE day=?"
+    ).get("2026-10-20").data;
+    assert.match(stored, /^@rle-snapshot:v1:/);
+    assert.ok(Buffer.byteLength(stored, "utf8") < Buffer.byteLength(original, "utf8") / 20);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshot_chunks WHERE day=?"
+    ).get("2026-10-20").n, 0);
+    const read = await f.store.snapshot("2026-10-20");
+    assert.deepEqual(read.state, published.state);
+    assert.equal(read.sha256, await hashText(original));
+    f.sqlite.prepare(
+      "UPDATE snapshots SET state_json=? WHERE day=?"
+    ).run("@rle-snapshot:v1:{\"date\":\"2026-10-20\",\"bounds\":{},\"runs\":[[0,0,999999999,\"森\",1]]}", "2026-10-20");
+    await assert.rejects(() => f.store.snapshot("2026-10-20"), /RLE/);
+  } finally { f.close(); }
+});
+
