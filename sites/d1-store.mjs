@@ -16,6 +16,84 @@ const INLINE_SNAPSHOT_LIMIT = 1_500_000;
 const SNAPSHOT_CHUNK_UNITS = 320_000;
 const CHUNKED_SNAPSHOT_MARKER = "@chunked-snapshot:v1";
 
+const RLE_SNAPSHOT_MARKER = "@rle-snapshot:v1:";
+// Carries an already verified DB SHA without exposing it in public JSON.
+const VERIFIED_SNAPSHOT_SHA = Symbol("verified-snapshot-sha");
+const MAX_RLE_RUNS = 4096;
+const MAX_RLE_DECODED_CELLS = 1_000_000;
+
+/**
+ * Lossless storage compression only: a run is (x, first-y, count, glyph, n).
+ * Receivers produce cells sorted by x, then y. Runs never cross columns.
+ * If a state has too many transitions, use existing full-JSON chunking.
+ * The authoritative SHA remains the SHA-256 of the ORIGINAL public JSON.
+ */
+function encodeSnapshotStorage(snapshot, serialized) {
+  if (serialized.length < 300_000 ||
+      snapshot.cells.length > MAX_RLE_DECODED_CELLS) return serialized;
+  const runs = [];
+  let lastCell = null;
+  let run = null;
+  for (const cell of snapshot.cells) {
+    if (lastCell && (cell.x < lastCell.x ||
+        (cell.x === lastCell.x && cell.y <= lastCell.y))) {
+      return serialized; // Input has no stable canonical order.
+    }
+    if (run && run[0] === cell.x && run[1] + run[2] === cell.y &&
+        run[3] === cell.char && run[4] === cell.n) {
+      run[2]++;
+    } else {
+      if (runs.length >= MAX_RLE_RUNS) return serialized;
+      run = [cell.x, cell.y, 1, cell.char, cell.n];
+      runs.push(run);
+    }
+    lastCell = cell;
+  }
+  const compact = RLE_SNAPSHOT_MARKER + JSON.stringify({
+    date: snapshot.date, bounds: snapshot.bounds, runs,
+  });
+  // Require substantial savings; otherwise no reason to change storage.
+  return compact.length * 2 < serialized.length ? compact : serialized;
+}
+
+function decodeSnapshotStorage(encoded) {
+  if (!encoded.startsWith(RLE_SNAPSHOT_MARKER)) return encoded;
+  const packed = JSON.parse(encoded.slice(RLE_SNAPSHOT_MARKER.length));
+  if (!packed || !Array.isArray(packed.runs) ||
+      packed.runs.length > MAX_RLE_RUNS || !packed.bounds) {
+    throw new Error("published snapshot RLE header invalid");
+  }
+  const cells = [];
+  const b = packed.bounds;
+  let lastX = null;
+  let lastY = null;
+  for (const run of packed.runs) {
+    if (!Array.isArray(run) || run.length !== 5) {
+      throw new Error("published snapshot RLE run invalid");
+    }
+    const [x, y, length, char, n] = run;
+    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) ||
+        !Number.isSafeInteger(length) || length <= 0 ||
+        !Number.isSafeInteger(n) || n < 1 ||
+        typeof char !== "string" || char.length > 32 ||
+        !Number.isSafeInteger(b.minX) || !Number.isSafeInteger(b.maxX) ||
+        !Number.isSafeInteger(b.minY) || !Number.isSafeInteger(b.maxY) ||
+        x < b.minX || x > b.maxX || y < b.minY ||
+        y + length - 1 > b.maxY || y + length - 1 < y ||
+        (lastX !== null && (x < lastX || (x === lastX && y <= lastY))) ||
+        cells.length + length > MAX_RLE_DECODED_CELLS) {
+      throw new Error("published snapshot RLE bounds invalid");
+    }
+    for (let offset = 0; offset < length; offset++) {
+      cells.push({ x, y: y + offset, char, n });
+    }
+    lastX = x;
+    lastY = y + length - 1;
+  }
+  return JSON.stringify({ date: packed.date, bounds: b, cells });
+}
+
+
 function snapshotParts(serialized) {
   if (encoder.encode(serialized).byteLength <= INLINE_SNAPSHOT_LIMIT) return [];
   const chunks = [];
@@ -260,19 +338,52 @@ export class D1Store {
         return chunk.chunkData;
       }).join("");
     }
+    // Reconstitute canonical JSON before checking the public-state digest.
+    serialized = decodeSnapshotStorage(serialized);
     const hash = await hashText(serialized);
     if (hash !== row.sha256) throw new Error("published snapshot checksum mismatch");
     const state = JSON.parse(serialized);
     if (!state || !Array.isArray(state.cells) || !state.bounds || state.date !== day) {
       throw new Error("published snapshot format mismatch");
     }
+    Object.defineProperty(state, VERIFIED_SNAPSHOT_SHA, {
+      value: row.sha256, enumerable: false,
+    });
     return state;
+  }
+  async latestDay() {
+    const row = await this.first("SELECT day FROM snapshots ORDER BY day DESC LIMIT 1");
+    return row?.day ?? null;
   }
   async latestState() {
     const row = await this.first(
       "SELECT day,state_json,sha256 FROM snapshots ORDER BY day DESC LIMIT 1"
     );
     return row ? this.decodeState(row, row.day) : null;
+  }
+  async publishedBounds() {
+    const row = await this.first(
+      "SELECT value FROM site_settings WHERE key='published_bounds'"
+    );
+    if (row) {
+      const bounds = JSON.parse(row.value);
+      if (!bounds || !["minX", "maxX", "minY", "maxY"]
+        .every(k => Number.isSafeInteger(bounds[k])) ||
+        bounds.minX > bounds.maxX || bounds.minY > bounds.maxY) {
+        throw new Error("published bounds configuration invalid");
+      }
+      return bounds;
+    }
+    // Compatibility with existing databases not yet containing cached
+    // bounds. The first request may read the latest map, subsequent requests
+    // only read the small metadata row.
+    const state = await this.latestState();
+    if (!state) return null;
+    await this.run(
+      "INSERT OR IGNORE INTO site_settings(key,value) VALUES('published_bounds',?)",
+      JSON.stringify(state.bounds)
+    );
+    return state.bounds;
   }
   async snapshot(day) {
     assertIsoDay(day);
@@ -291,16 +402,24 @@ export class D1Store {
   async initialize(instant = this.clock()) {
     const existing = await this.latestState();
     if (existing) return existing;
-    const day = previousDay(dayAtInstant(instant));
+    // Recover legacy databases that accepted posts before any snapshot was
+    // initialized, including anonymized posts from deleted accounts.
+    const pending = await this.first(
+      "SELECT MIN(day) AS day FROM (SELECT day FROM posts UNION ALL SELECT day FROM orphaned_posts)"
+    );
+    const today = dayAtInstant(instant);
+    const firstDay = pending?.day && pending.day < today ? pending.day : today;
+    const day = previousDay(firstDay);
     const state = {
       date: day, bounds: boundsForUserCount(await this.usersCount()), cells: [],
     };
     const text = JSON.stringify(state);
     await this.run(
-      "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+      "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) " +
+      "SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM snapshots)",
       day, text, await hashText(text), this.now()
     );
-    return (await this.snapshot(day)).state;
+    return await this.latestState();
   }
   async defaultRules() {
     const row = await this.first(
@@ -341,8 +460,7 @@ export class D1Store {
     safeInt(y, "y");
     const glyph = normalizeGlyph(char);
     const base = boundsForUserCount(await this.usersCount());
-    const prior = await this.latestState();
-    const bounds = prior?.bounds ?? base;
+    const bounds = (await this.publishedBounds()) ?? base;
     const minX = Math.min(bounds.minX, base.minX);
     const minY = Math.min(bounds.minY, base.minY);
     const maxX = Math.max(bounds.maxX, base.maxX);
@@ -350,7 +468,8 @@ export class D1Store {
     if (x < minX || x > maxX || y < minY || y > maxY) {
       throw new RangeError("post lies outside the active map");
     }
-    if (await this.sealedDay(day) || await this.snapshot(day)) {
+    if (await this.sealedDay(day) ||
+        await this.first("SELECT 1 AS present FROM snapshots WHERE day=?", day)) {
       throw new Error("day already published or sealed");
     }
     try {
@@ -417,7 +536,8 @@ export class D1Store {
     // sealed so an operator can recover without losing the cutoff.
     const effective = await this.dayRules(day);
     const userCount = await this.usersCount();
-    const previousHash = (await this.snapshot(previous.date))?.sha256;
+    const previousHash = previous[VERIFIED_SNAPSHOT_SHA] ??
+      (await this.snapshot(previous.date))?.sha256;
     if (!previousHash) throw new Error("previous snapshot is unavailable");
     await this.run(
       "INSERT OR IGNORE INTO day_closures(day,rules_json,user_count,previous_hash,closed_at) " +
@@ -435,8 +555,11 @@ export class D1Store {
     });
     const serialized = JSON.stringify(next);
     const digest = await hashText(serialized);
-    const chunks = snapshotParts(serialized);
-    const stateValue = chunks.length > 0 ? CHUNKED_SNAPSHOT_MARKER : serialized;
+    // RLE covers large contiguous glyph regions without changing API JSON.
+    // Existing raw JSON/chunks remain readable for previous releases.
+    const storage = encodeSnapshotStorage(next, serialized);
+    const chunks = snapshotParts(storage);
+    const stateValue = chunks.length > 0 ? CHUNKED_SNAPSHOT_MARKER : storage;
     // Each INSERT can carry two chunks via a SELECT/UNION. This reduces
     // per-invocation D1 query count while preserving per-value row limits.
     const chunkWrites = [];
@@ -468,17 +591,31 @@ export class D1Store {
         day, stateValue, digest, this.now()
       ),
       ...chunkWrites,
+      // Make the public grid bounds readable without fetching every map cell
+      // on each authenticated post. The guard prevents a competing publisher
+      // with a different digest from storing incorrect metadata.
+      this.p(
+        "INSERT INTO site_settings(key,value) " +
+        "SELECT 'published_bounds',? WHERE EXISTS (" +
+        "SELECT 1 FROM snapshots WHERE day=? AND sha256=?) " +
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        JSON.stringify(next.bounds), day, digest
+      ),
       // Snapshot, chunks, and removal of source identifying posts are one
       // atomic transaction: never erase information needed for a retry.
       this.p("DELETE FROM closed_posts WHERE day=?", day),
       this.p("DELETE FROM orphaned_posts WHERE day=?", day),
       this.p("DELETE FROM posts WHERE day=?", day),
     ]);
+    // A successful INSERT and its chunks were committed in one D1 batch.
+    // Returning the in-memory state avoids a second full JSON decode of a
+    // 200k+ cell map. Only a lost concurrent insert needs to re-read storage.
+    if (writes[1]?.meta?.changes === 1) {
+      return { state: next, existed: false };
+    }
     const stored = await this.snapshot(day);
     if (!stored) throw new Error("snapshot write was not committed");
-    // Use INSERT changes rather than checksum equality: concurrent jobs can
-    // compute the same digest but only the first one actually wrote the row.
-    return { state: stored.state, existed: writes[1]?.meta?.changes === 0 };
+    return { state: stored.state, existed: true };
   }
   async publishClosedDays(instant = this.clock(), maxDays = 32) {
     safeInt(maxDays, "maxDays", 1);

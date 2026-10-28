@@ -102,37 +102,64 @@ export function buildDailySnapshot(
     maxY: Math.max(previous.bounds.maxY, wanted.maxY),
   };
 
-  const occupants = new Map<string, Cell>();
-  for (const cell of previous.cells) {
-    const index = position(cell.x, cell.y);
-    if (occupants.has(index)) throw new RangeError("duplicate cell in previous snapshot");
-    occupants.set(index, { ...cell });
+  // Only submitted coordinates need collision evaluation. Rebuilding a
+  // string-keyed map of EVERY occupied cell made long-running D1 publication
+  // unnecessarily expensive and could exceed a hosted isolate's memory.
+  const latest = selectFinalPosts(records, config.date);
+  if (latest.length === 0) {
+    return advanceOneDay({
+      date: previous.date, bounds, cells: previous.cells,
+    }, config.date, rules);
   }
 
-  const postClaims = new Map<string, { x: number; y: number; claims: Claim[] }>();
-  for (const post of selectFinalPosts(records, config.date)) {
+  type Target = { x: number; y: number; claims: Claim[]; processed: boolean };
+  const targetsByX = new Map<number, Map<number, Target>>();
+  for (const post of latest) {
     if (!within(bounds, post.x, post.y)) {
       throw new RangeError("post lies outside current map bounds");
     }
-    const index = position(post.x, post.y);
-    let target = postClaims.get(index);
+    let column = targetsByX.get(post.x);
+    if (column === undefined) {
+      column = new Map<number, Target>();
+      targetsByX.set(post.x, column);
+    }
+    let target = column.get(post.y);
     if (target === undefined) {
-      target = { x: post.x, y: post.y, claims: [] };
-      postClaims.set(index, target);
+      target = { x: post.x, y: post.y, claims: [], processed: false };
+      column.set(post.y, target);
     }
     target.claims.push({ char: post.char, n: strength });
   }
 
-  for (const [index, target] of postClaims) {
-    const resident = occupants.get(index);
-    const claims: Claim[] = resident === undefined
-      ? target.claims : [{ char: resident.char, n: resident.n }, ...target.claims];
-    const result = resolveCollision(claims, rules);
-    if (result === null) occupants.delete(index);
-    else occupants.set(index, { x: target.x, y: target.y, ...result });
+  const nextCells: Cell[] = [];
+  for (const resident of previous.cells) {
+    const target = targetsByX.get(resident.x)?.get(resident.y);
+    if (target === undefined) {
+      nextCells.push(resident);
+      continue;
+    }
+    // A duplicate touched cell must not be masked by collision deletion.
+    if (target.processed) {
+      throw new RangeError("duplicate cell in previous snapshot");
+    }
+    target.processed = true;
+    const survivor = resolveCollision(
+      [{ char: resident.char, n: resident.n }, ...target.claims], rules,
+    );
+    if (survivor !== null) {
+      nextCells.push({ x: target.x, y: target.y, ...survivor });
+    }
   }
-
+  for (const column of targetsByX.values()) {
+    for (const target of column.values()) {
+      if (target.processed) continue;
+      const survivor = resolveCollision(target.claims, rules);
+      if (survivor !== null) {
+        nextCells.push({ x: target.x, y: target.y, ...survivor });
+      }
+    }
+  }
   return advanceOneDay({
-    date: previous.date, bounds, cells: [...occupants.values()],
+    date: previous.date, bounds, cells: nextCells,
   }, config.date, rules);
 }

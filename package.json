@@ -17,6 +17,7 @@
     "configure:defaults": "npm run build && node scripts/configure-defaults.mjs",
     "preflight": "node scripts/release-preflight.mjs",
     "benchmark": "npm run build && node scripts/benchmark-engine.mjs",
+    "benchmark:365": "npm run build && node scripts/benchmark-365.mjs",
     "build:sites": "npm run build:site && node scripts/build-sites-worker.mjs",
     "check:public": "node scripts/check-public-bundle.mjs"
   },

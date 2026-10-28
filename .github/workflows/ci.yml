@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# Avoid burning two full benchmark matrices on every iterative PR commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,17 +24,29 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
-      - name: Install exact direct dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
       - name: Engine, WebAuthn, SQLite, site tests
         run: npm test
       - name: Synthetic performance measurement (Node 22)
-        if: matrix.node == '22'
+        if: matrix.node == '22' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
         run: npm run benchmark
+      - name: Long-run 365-generation memory and output-size audit (Node 22)
+        if: matrix.node == '22' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
+        run: npm run benchmark:365
+      - name: Constrained V8 heap 365-generation smoke (Node 22)
+        if: matrix.node == '22' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
+        run: node --max-old-space-size=96 scripts/benchmark-365.mjs
+      - name: D1-style 365-day publication and storage audit (Node 22)
+        if: matrix.node == '22' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
+        run: node scripts/benchmark-d1-365.mjs
+      - name: Constrained V8 heap D1-style 365-day publication (Node 22)
+        if: matrix.node == '22' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
+        run: node --max-old-space-size=96 scripts/benchmark-d1-365.mjs
       - name: Audit production dependency vulnerabilities
         run: npm audit --omit=dev --audit-level=high
       - name: Upload static preview (no DB or account data)
-        if: matrix.node == '22'
+        if: matrix.node == '22' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@v4
         with:
           name: erosion-map-static-preview

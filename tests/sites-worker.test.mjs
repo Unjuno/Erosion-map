@@ -337,3 +337,56 @@ test("Sites enforces per-account updates without losing the previous final post"
     assert.equal(existing.char, "星");
   } finally { f.close(); }
 });
+
+
+test("scheduled Sites catch-up bounds daily D1 work and validates overrides", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const { D1Store } = await import("../sites/d1-store.mjs");
+    const worker = (await import("../sites/worker.mjs")).default;
+    const store = new D1Store(f.env.DB, {
+      rulesDefault: { sameGlyphMode: "max", minimumOutgoingInfluence: 1 },
+    });
+    await store.initialize(new Date("2026-10-20T12:00:00Z"));
+    let queries = 0;
+    const originalPrepare = f.env.DB.prepare.bind(f.env.DB);
+    f.env.DB.prepare = (sql) => {
+      queries++;
+      return originalPrepare(sql);
+    };
+    f.env.MAX_CATCHUP_DAYS = "2";
+    let pending;
+    await worker.scheduled({}, f.env, { waitUntil: promise => { pending = promise; } });
+    await pending;
+    assert.ok(queries <= 50,
+      "two-day typical catch-up must fit a 50-query D1 invocation budget");
+    const days = f.sqlite.prepare("SELECT day FROM snapshots ORDER BY day").all();
+    assert.deepEqual(days.map(x => x.day),
+      ["2026-10-19", "2026-10-20", "2026-10-21"]);
+    assert.equal((await f.fetcher("/api/status")).status, 200);
+    assert.equal((await handleRequest(new Request(origin + "/api/status"),
+      { ...f.env, MAX_CATCHUP_DAYS: "99" }, f.context)).status, 503);
+  } finally { f.close(); }
+});
+
+
+test("Sites status and history do not decode the full map when already current", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    await f.fetcher("/api/status"); // Establish the baseline once.
+    const sql = [];
+    const before = f.env.DB.prepare.bind(f.env.DB);
+    f.env.DB.prepare = query => {
+      sql.push(query);
+      return before(query);
+    };
+    assert.equal((await f.fetcher("/api/status")).status, 200);
+    assert.equal((await f.fetcher("/api/history")).status, 200);
+    assert.ok(!sql.some(statement => /SELECT .*state_json/i.test(statement)),
+      "status/history should use only day and checksum metadata");
+    assert.equal((await f.fetcher("/api/state")).status, 200,
+      "full map must still be verified for the actual map request");
+  } finally { f.close(); }
+});
