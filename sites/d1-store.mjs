@@ -351,6 +351,10 @@ export class D1Store {
     });
     return state;
   }
+  async latestDay() {
+    const row = await this.first("SELECT day FROM snapshots ORDER BY day DESC LIMIT 1");
+    return row?.day ?? null;
+  }
   async latestState() {
     const row = await this.first(
       "SELECT day,state_json,sha256 FROM snapshots ORDER BY day DESC LIMIT 1"
