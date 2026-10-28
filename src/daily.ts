@@ -5,7 +5,7 @@
  */
 import {
   advanceOneDay, boundsForUserCount, normalizeGlyph, resolveCollision,
-  type Bounds, type Cell, type Claim, type Snapshot,
+  type Bounds, type Cell, type Claim, type Snapshot, type ErosionRules,
 } from "./engine.js";
 import { assertIsoDay, nextIsoDay } from "./calendar.js";
 
@@ -22,6 +22,9 @@ export type DayConfig = Readonly<{
   date: string;
   /** The trusted server decides N; never accept an untrusted client N. */
   postStrength?: number;
+  /** Unapproved experiment; omitted fields preserve historical sum/N-1 semantics. */
+  sameGlyphMode?: ErosionRules["sameGlyphMode"];
+  minimumOutgoingInfluence?: ErosionRules["minimumOutgoingInfluence"];
   /** Optional: monotonically expand bounds based on the registered user count. */
   registeredUserCount?: number;
 }>;
@@ -79,6 +82,10 @@ export function buildDailySnapshot(
   if (config.date !== expected) {
     throw new RangeError("daily states must be generated exactly one calendar day apart");
   }
+  const rules: ErosionRules = {
+    sameGlyphMode: config.sameGlyphMode ?? "sum",
+    minimumOutgoingInfluence: config.minimumOutgoingInfluence ?? 0,
+  };
   const strength = config.postStrength ?? 1;
   safeInteger(strength, "postStrength", 1);
   if (config.registeredUserCount !== undefined) {
@@ -120,12 +127,12 @@ export function buildDailySnapshot(
     const resident = occupants.get(index);
     const claims: Claim[] = resident === undefined
       ? target.claims : [{ char: resident.char, n: resident.n }, ...target.claims];
-    const result = resolveCollision(claims);
+    const result = resolveCollision(claims, rules);
     if (result === null) occupants.delete(index);
     else occupants.set(index, { x: target.x, y: target.y, ...result });
   }
 
   return advanceOneDay({
     date: previous.date, bounds, cells: [...occupants.values()],
-  }, config.date);
+  }, config.date, rules);
 }

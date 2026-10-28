@@ -17,12 +17,23 @@ export type Snapshot = Readonly<{
 export type Claim = Readonly<{ char: string; n: number }>;
 export type CollisionResult = Readonly<{ char: string; n: number }> | null;
 /** The default "sum" remains the unapproved historical simulation model. */
-export type ErosionRules = Readonly<{ sameGlyphMode?: "sum" | "max" }>;
+export type ErosionRules = Readonly<{
+  sameGlyphMode?: "sum" | "max";
+  /** Experimental: N=1 sends influence 1 instead of 0. Requires max grouping. */
+  minimumOutgoingInfluence?: 0 | 1;
+}>;
 
 function verifyMode(rules: ErosionRules): "sum" | "max" {
   const mode = rules.sameGlyphMode ?? "sum";
   if (mode !== "sum" && mode !== "max") {
     throw new RangeError("sameGlyphMode must be 'sum' or 'max'");
+  }
+  const floor = rules.minimumOutgoingInfluence ?? 0;
+  if (floor !== 0 && floor !== 1) {
+    throw new RangeError("minimumOutgoingInfluence must be 0 or 1");
+  }
+  if (floor === 1 && mode !== "max") {
+    throw new RangeError("N=1 propagation requires max grouping");
   }
   return mode;
 }
@@ -142,6 +153,7 @@ export function advanceOneDay(
   assertIsoDay(previous.date);
   if (nextDate <= previous.date)
     throw new RangeError("nextDate must be later than the snapshot date");
+  const minimumOutgoing = rules.minimumOutgoingInfluence ?? 0;
   const current = validateSnapshot(previous);
   const receivers = new Map<string, Point>();
   const addReceiver = (x: number, y: number): void => {
@@ -168,9 +180,11 @@ export function advanceOneDay(
       output.push(resident);
       continue;
     }
-    const incoming: Claim[] = neighbors
-      .filter((cell): cell is Cell => cell !== undefined && cell.n >= 2)
-      .map((cell) => ({ char: cell.char, n: cell.n - 1 }));
+    const incoming: Claim[] = neighbors.flatMap((cell) => {
+      if (cell === undefined) return [];
+      const strength = Math.max(cell.n - 1, minimumOutgoing);
+      return strength > 0 ? [{ char: cell.char, n: strength }] : [];
+    });
     if (incoming.length === 0) {
       if (resident !== undefined) output.push(resident);
       continue;

@@ -47,6 +47,15 @@ export class Store {
       "CREATE TABLE IF NOT EXISTS day_config (day TEXT PRIMARY KEY, post_strength INTEGER NOT NULL CHECK(post_strength>=1)) STRICT;",
       "CREATE TABLE IF NOT EXISTS snapshots (day TEXT PRIMARY KEY, state_json TEXT NOT NULL, sha256 TEXT NOT NULL, created_at INTEGER NOT NULL) STRICT;",
     ].join("\n"));
+    // Migrate development DBs created before rule options were introduced.
+    const columns = new Set(this.db.prepare("PRAGMA table_info(day_config)")
+      .all().map((column) => column.name));
+    if (!columns.has("same_glyph_mode")) {
+      this.db.exec("ALTER TABLE day_config ADD COLUMN same_glyph_mode TEXT NOT NULL DEFAULT 'sum' CHECK(same_glyph_mode IN ('sum','max'))");
+    }
+    if (!columns.has("min_outbound")) {
+      this.db.exec("ALTER TABLE day_config ADD COLUMN min_outbound INTEGER NOT NULL DEFAULT 0 CHECK(min_outbound IN (0,1))");
+    }
   }
   close() { this.db.close(); }
   usersCount() {
@@ -229,6 +238,34 @@ export class Store {
     ).get(day);
     return row ? Number(row.strength) : 1;
   }
+  dayRules(day) {
+    assertIsoDay(day);
+    const row = this.db.prepare(
+      "SELECT post_strength AS postStrength, same_glyph_mode AS sameGlyphMode, min_outbound AS minimumOutgoingInfluence FROM day_config WHERE day=?"
+    ).get(day);
+    return row ?? { postStrength: 1, sameGlyphMode: "sum", minimumOutgoingInfluence: 0 };
+  }
+  /** Trusted operator-only setting, never exposed on public routes. */
+  setDayRules(day, sameGlyphMode, minimumOutgoingInfluence = 0) {
+    assertIsoDay(day);
+    if (!["sum", "max"].includes(sameGlyphMode) ||
+        ![0, 1].includes(minimumOutgoingInfluence) ||
+        (minimumOutgoingInfluence === 1 && sameGlyphMode !== "max")) {
+      throw new RangeError("invalid receiver-driven rules combination");
+    }
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.snapshot(day)) throw new Error("published day is immutable");
+      this.db.prepare(
+        "INSERT INTO day_config(day,post_strength,same_glyph_mode,min_outbound) VALUES(?,1,?,?) " +
+        "ON CONFLICT(day) DO UPDATE SET same_glyph_mode=excluded.same_glyph_mode,min_outbound=excluded.min_outbound"
+      ).run(day, sameGlyphMode, minimumOutgoingInfluence);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
   /** Trusted operator-only method; never expose this on public routes. */
   setPostStrength(day, n) {
     assertIsoDay(day);
@@ -305,7 +342,7 @@ export class Store {
         throw new RangeError("cannot skip days or publish out of order");
       }
       const next = buildDailySnapshot(latest, this.dailyPosts(day), {
-        date: day, postStrength: this.postStrength(day),
+        date: day, ...this.dayRules(day),
         registeredUserCount: this.usersCount(),
       });
       const encoded = JSON.stringify(next);
