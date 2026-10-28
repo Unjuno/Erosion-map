@@ -25,6 +25,11 @@ test("public repository ships only technical migrations and config examples", as
   const rates = await readFile("migrations/0005_durable_rate_limits.sql", "utf8");
   assert.match(rates, /CREATE TABLE IF NOT EXISTS rate_limits/);
   assert.doesNotMatch(rates, /raw_ip|ip_address|credential_id/i);
+  const readme = await readFile("README.md", "utf8");
+  assert.match(readme, /ChatGPT Sitesは未公開/);
+  assert.match(readme, /新しく作成した空のD1/);
+  assert.match(readme, /既存のD1が後から確認された場合だけ/);
+  assert.match(readme, /プレビューの実在・D1マイグレーション完了/);
   const variables = await readFile(".env.example", "utf8");
   assert.match(variables, /^PUBLIC_ORIGIN=/m);
   assert.doesNotMatch(variables, /(?:sk-proj-|AKIA[0-9A-Z]{16})/);
