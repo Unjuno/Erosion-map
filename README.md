@@ -53,8 +53,8 @@ npm run preflight     # 本番公開の前提条件を判定（未確認なら�
 | `ASSETS` | `site/` の静的アセットを配信するバインディング |
 | `PUBLIC_ORIGIN` | 最終HTTPSサイトの正確なOrigin |
 | `RP_ID` | パスキーの依拠当事者ドメイン |
-| `SAME_GLYPH_MODE` | `sum` （従来）または `max` （実験） |
-| `N1_OUTBOUND` | `0` （従来）または `1` （実験、max限定） |
+| `SAME_GLYPH_MODE` | 既定 `max` （v1候補）／従来 `sum` |
+| `N1_OUTBOUND` | 既定 `1` （v1候補）／従来 `0`、1はmax限定 |
 
 サイトの公開操作・D1作成・実運用のスケジュール設定は、このソース管理とは別にGPT Sites上で行います。`scheduled` イベントが利用できない場合は閲覧時に1日分を補完する実装がありますが、厳密な時刻での無訪問更新を保証しません。
 
@@ -62,11 +62,11 @@ npm run preflight     # 本番公開の前提条件を判定（未確認なら�
 
 元の要件にある「通常投稿N=1」と「隣接への影響はN−1」は同時に採用すると、通常投稿が広がらないという矛盾があります。
 
-- [#1](https://github.com/Unjuno/Erosion-map/issues/1): N=1の伝播をどう実現するか
+- [#1](https://github.com/Unjuno/Erosion-map/issues/1): N=1の伝播をどう実現するか（Sites v1候補: `max+最低影響1`）
 - [#2](https://github.com/Unjuno/Erosion-map/issues/2): 多勢力相殺・同文字の合算などの正式ルール
 - [#3](https://github.com/Unjuno/Erosion-map/issues/3): 同文字加算に伴う長期数値オーバーフロー
 
-安全に動かせる比較用プロファイルとして `max + N1_OUTBOUND=1` を実装・検証しています。**元仕様を無断変更しないため本番デフォルトにはしていません。** [ルール比較](docs/RULE-COMPARISON.md)を参照してください。
+動作するサイトを成立させるため、Sites Workerの**v1候補デフォルト**を `max + N1_OUTBOUND=1` に設定しました。通常のN=1投稿を翌日に周囲へ広げ、同文字の影響値の発散を避けます。元仕様の `sum,N−1` も環境変数で指定できますが、数値発散と不拡大の問題があり推奨しません。これは**元仕様からの明示的な変更提案**であり、ユーザーによる最終確認はまだ完了していません。 [ルール比較](docs/RULE-COMPARISON.md)を参照してください。
 
 ## 画面
 

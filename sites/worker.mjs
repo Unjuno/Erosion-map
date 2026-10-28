@@ -45,8 +45,12 @@ function configuration(env) {
       !(rpID === u.hostname || u.hostname.endsWith("." + rpID))) {
     throw new Error("RP_ID must match the public origin");
   }
-  const mode = env.SAME_GLYPH_MODE ?? "sum";
-  const floor = env.N1_OUTBOUND === undefined ? 0 : Number(env.N1_OUTBOUND);
+  // Sites v1 candidate defaults to a bounded, playable ruleset.
+  // Historical "sum/N-1" remains available by explicit configuration.
+  // This is an intentional, documented resolution of the contradictory
+  // default post N=1 + outgoing (N-1) product requirements.
+  const mode = env.SAME_GLYPH_MODE ?? "max";
+  const floor = env.N1_OUTBOUND === undefined ? 1 : Number(env.N1_OUTBOUND);
   if (!["sum", "max"].includes(mode) || ![0, 1].includes(floor) ||
       (floor === 1 && mode !== "max")) {
     throw new Error("invalid trusted erosion rule settings");

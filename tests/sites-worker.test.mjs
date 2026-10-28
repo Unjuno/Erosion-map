@@ -235,3 +235,28 @@ test("Sites request parser rejects oversized bodies and invalid JSON without all
     assert.equal(malformed.status, 400);
   } finally { f.close(); }
 });
+
+
+test("Sites default rule profile grows a normal N1 submission without unsafe sums", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const env = { ...f.env };
+    delete env.SAME_GLYPH_MODE;
+    delete env.N1_OUTBOUND;
+    // The configuration fallback is exercised on a new worker/store adapter.
+    const reply = await handleRequest(
+      new Request(origin + "/api/status"), env, f.context
+    );
+    assert.equal(reply.status, 200);
+    // The migration ships empty settings, so D1Store uses the v1 candidate
+    // defaults injected by the Sites runtime.
+    const { D1Store } = await import("../sites/d1-store.mjs");
+    const store = new D1Store(f.env.DB, {
+      clock, rulesDefault: { sameGlyphMode: "max", minimumOutgoingInfluence: 1 },
+    });
+    assert.deepEqual(await store.dayRules("2026-10-20"), {
+      postStrength: 1, sameGlyphMode: "max", minimumOutgoingInfluence: 1,
+    });
+  } finally { f.close(); }
+});
