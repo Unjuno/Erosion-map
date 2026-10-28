@@ -463,3 +463,53 @@ test("large same-glyph snapshots are stored losslessly with small column runs", 
   } finally { f.close(); }
 });
 
+
+
+test("authenticated updates use persisted public bounds instead of decoding the entire map", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("bounds-player", {
+      id: "key-bounds", publicKey: new Uint8Array([1, 2, 3]), counter: 0,
+    }, true);
+    await f.store.run("INSERT INTO site_settings(key,value) VALUES(?,?)",
+      "receiver_default", JSON.stringify({
+        sameGlyphMode: "max", minimumOutgoingInfluence: 1,
+      }));
+    await f.store.submit("bounds-player", "2026-10-20", 0, 0, "海");
+    await f.store.publishDay("2026-10-20");
+    assert.ok(await f.store.first(
+      "SELECT value FROM site_settings WHERE key='published_bounds'"
+    ));
+    const seen = [];
+    const originalPrepare = f.db.prepare.bind(f.db);
+    f.db.prepare = sql => {
+      seen.push(sql);
+      return originalPrepare(sql);
+    };
+    const newPost = await f.store.submit("bounds-player",
+      "2026-10-22", 3, 4, "森");
+    assert.equal(newPost.revision, 1);
+    assert.ok(!seen.some(sql => /SELECT .*state_json/i.test(sql)),
+      "the normal posting path must not load the full published map");
+  } finally { f.close(); }
+});
+
+test("cached published bounds remain monotonic after user count shrinks", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("expanded-player", {
+      id: "key-expanded", publicKey: new Uint8Array([7]), counter: 0,
+    }, true);
+    const bounds = { minX: -300, maxX: 299, minY: -300, maxY: 299 };
+    await f.store.run(
+      "INSERT INTO site_settings(key,value) VALUES(?,?)", "published_bounds",
+      JSON.stringify(bounds)
+    );
+    const posted = await f.store.submit("expanded-player", "2026-10-22", 299, 299, "木");
+    assert.deepEqual([posted.x, posted.y], [299, 299]);
+    await assert.rejects(() => f.store.submit(
+      "expanded-player", "2026-10-22", 301, 0, "木"), /outside/);
+  } finally { f.close(); }
+});
