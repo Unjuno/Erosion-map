@@ -281,3 +281,75 @@ test("existing account can add a second passkey, without creating a new user", a
     assert.equal((await get("/api/me", session)).json.authenticated, false);
   });
 });
+
+
+test("account deletion requires another signed passkey and removes only private data", async () => {
+  await withServer(async ({ store, post, get }) => {
+    const authenticator = simulatedAuthenticator();
+    const begin = await post("/api/auth/register/start", {});
+    const registered = await post("/api/auth/register/finish", {
+      credential: authenticator.register(begin.json.options.challenge),
+    }, cookie(begin.res.headers.get("set-cookie"), "erosion_challenge"));
+    assert.equal(registered.res.status, 200);
+    const session = cookie(registered.res.headers.get("set-cookie"), "erosion_session");
+    assert.equal((await post("/api/post", { x: 1, y: 2, char: "森" }, session)).res.status, 200);
+    const started = await post("/api/account/delete/start", {}, session);
+    assert.equal(started.res.status, 200);
+    const pending = cookie(started.res.headers.get("set-cookie"), "erosion_challenge");
+    const assertion = authenticator.authenticate(
+      started.json.options.challenge, begin.json.options.user.id,
+    );
+    const noConfirmation = await post("/api/account/delete/finish", {
+      confirm: "NO", credential: assertion,
+    }, session + "; " + pending);
+    assert.equal(noConfirmation.res.status, 400);
+    assert.equal(store.usersCount(), 1);
+
+    const tampered = await post("/api/account/delete/finish", {
+      confirm: "DELETE", credential: {
+        ...assertion, response: {
+          ...assertion.response, signature: b64url(randomBytes(70)),
+        },
+      },
+    }, session + "; " + pending);
+    assert.equal(tampered.res.status, 400);
+    assert.equal(store.usersCount(), 1);
+
+    const retry = await post("/api/account/delete/start", {}, session);
+    const deletion = await post("/api/account/delete/finish", {
+      confirm: "DELETE",
+      credential: authenticator.authenticate(
+        retry.json.options.challenge, begin.json.options.user.id,
+      ),
+    }, session + "; " +
+      cookie(retry.res.headers.get("set-cookie"), "erosion_challenge"));
+    assert.equal(deletion.res.status, 200, JSON.stringify(deletion.json));
+    assert.deepEqual(deletion.json, { deleted: true });
+    assert.equal(store.usersCount(), 0);
+    assert.equal(store.credentialById(authenticator.id), null);
+    assert.equal(store.dailyPosts("2026-10-20").length, 0);
+    assert.equal((await get("/api/me", session)).json.authenticated, false);
+    assert.ok(store.snapshot("2026-10-19")?.state);
+  });
+});
+
+test("user-bound deletion challenges cannot be replayed at login", async () => {
+  await withServer(async ({ post }) => {
+    const authenticator = simulatedAuthenticator();
+    const begin = await post("/api/auth/register/start", {});
+    const registered = await post("/api/auth/register/finish", {
+      credential: authenticator.register(begin.json.options.challenge),
+    }, cookie(begin.res.headers.get("set-cookie"), "erosion_challenge"));
+    assert.equal(registered.res.status, 200);
+    const session = cookie(registered.res.headers.get("set-cookie"), "erosion_session");
+    const challenge = await post("/api/account/delete/start", {}, session);
+    const pending = cookie(challenge.res.headers.get("set-cookie"), "erosion_challenge");
+    const reused = await post("/api/auth/login/finish", {
+      credential: authenticator.authenticate(
+        challenge.json.options.challenge, begin.json.options.user.id,
+      ),
+    }, session + "; " + pending);
+    assert.equal(reused.res.status, 400);
+    assert.equal(reused.json.error, "challenge is bound to a different operation");
+  });
+});
