@@ -27,7 +27,8 @@ const MAX_RLE_DECODED_CELLS = 1_000_000;
  * The authoritative SHA remains the SHA-256 of the ORIGINAL public JSON.
  */
 function encodeSnapshotStorage(snapshot, serialized) {
-  if (serialized.length < 300_000) return serialized;
+  if (serialized.length < 300_000 ||
+      snapshot.cells.length > MAX_RLE_DECODED_CELLS) return serialized;
   const runs = [];
   let lastCell = null;
   let run = null;
