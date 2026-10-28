@@ -1,7 +1,7 @@
 /**
  * Asynchronous D1 persistence adapter for ChatGPT Sites-compatible workers.
  *
- * The migration in migrations/0001_d1_schema.sql must be applied before use.
+ * Requires D1 migrations 0001, 0002, 0003, and 0004 in order.
  * Public routes must authenticate sessions themselves; do not expose
  * createUser, submit, or publishing methods to anonymous calls.
  */
@@ -10,6 +10,26 @@ import { boundsForUserCount, normalizeGlyph } from "../dist/engine.js";
 import { assertIsoDay, dayAtInstant, nextIsoDay } from "../dist/calendar.js";
 
 const encoder = new TextEncoder();
+// D1 limits any single TEXT, BLOB, or table row to 2,000,000 bytes.
+// Each stored chunk is at most 320,000 UTF-16 code units, or <=1.28MB UTF-8.
+const INLINE_SNAPSHOT_LIMIT = 1_500_000;
+const SNAPSHOT_CHUNK_UNITS = 320_000;
+const CHUNKED_SNAPSHOT_MARKER = "@chunked-snapshot:v1";
+
+function snapshotParts(serialized) {
+  if (encoder.encode(serialized).byteLength <= INLINE_SNAPSHOT_LIMIT) return [];
+  const chunks = [];
+  for (let index = 0; index < serialized.length;) {
+    let end = Math.min(serialized.length, index + SNAPSHOT_CHUNK_UNITS);
+    // Do not split a UTF-16 surrogate pair across TEXT rows.
+    const codeUnit = serialized.charCodeAt(end - 1);
+    if (end < serialized.length && codeUnit >= 0xD800 && codeUnit <= 0xDBFF) end--;
+    if (end <= index) throw new Error("failed to split snapshot at Unicode boundary");
+    chunks.push(serialized.slice(index, end));
+    index = end;
+  }
+  return chunks;
+}
 export async function hashText(value) {
   const bytes = encoder.encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -41,7 +61,11 @@ function decodeCredential(row) {
   let key;
   if (row.publicKey instanceof ArrayBuffer) key = new Uint8Array(row.publicKey);
   else if (row.publicKey instanceof Uint8Array) key = new Uint8Array(row.publicKey);
-  else throw new Error("unexpected passkey key encoding");
+  else if (Array.isArray(row.publicKey) &&
+           row.publicKey.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+    // Real D1 returns BLOB columns as number[], unlike Node's SQLite adapter.
+    key = Uint8Array.from(row.publicKey);
+  } else throw new Error("unexpected passkey key encoding");
   return {
     id: row.id, userId: row.userId, publicKey: key,
     counter: Number(row.counter), transports: JSON.parse(row.transportsJson),
@@ -129,12 +153,24 @@ export class D1Store {
   }
   async deleteUser(userId) {
     safeUser(userId);
+    // A calendar day closes at JST midnight, independently of whether
+    // the scheduled publisher has run. Preserve past, unsealed final posts
+    // without the account ID before ON DELETE CASCADE removes live rows.
+    const today = dayAtInstant(this.clock());
     const statements = [
+      this.p(
+        "INSERT INTO orphaned_posts(day,revision,x,y,char) " +
+        "SELECT p.day,p.revision,p.x,p.y,p.char FROM posts AS p " +
+        "WHERE p.user_id=? AND p.day<? " +
+        "AND NOT EXISTS (SELECT 1 FROM day_closures WHERE day=p.day) " +
+        "AND NOT EXISTS (SELECT 1 FROM snapshots WHERE day=p.day)",
+        userId, today
+      ),
       this.p("DELETE FROM challenges WHERE user_id=?", userId),
       this.p("DELETE FROM users WHERE id=?", userId),
     ];
     const changed = await this.db.batch(statements);
-    if (changed[1].meta?.changes !== 1) throw new RangeError("account not found");
+    if (changed[2].meta?.changes !== 1) throw new RangeError("account not found");
   }
   async issueChallenge(tokenHash, kind, challenge, userId = null, ttl = 300_000) {
     safeHash(tokenHash);
@@ -188,9 +224,23 @@ export class D1Store {
   }
   async decodeState(row, day) {
     if (!row) return null;
-    const hash = await hashText(row.state_json);
+    let serialized = row.state_json;
+    if (serialized === CHUNKED_SNAPSHOT_MARKER) {
+      const chunks = await this.all(
+        "SELECT chunk_index AS chunkIndex, chunk_data AS chunkData " +
+        "FROM snapshot_chunks WHERE day=? ORDER BY chunk_index", day
+      );
+      if (chunks.length === 0) throw new Error("published snapshot chunks missing");
+      serialized = chunks.map((chunk, index) => {
+        if (Number(chunk.chunkIndex) !== index || typeof chunk.chunkData !== "string") {
+          throw new Error("published snapshot chunk order is invalid");
+        }
+        return chunk.chunkData;
+      }).join("");
+    }
+    const hash = await hashText(serialized);
     if (hash !== row.sha256) throw new Error("published snapshot checksum mismatch");
-    const state = JSON.parse(row.state_json);
+    const state = JSON.parse(serialized);
     if (!state || !Array.isArray(state.cells) || !state.bounds || state.date !== day) {
       throw new Error("published snapshot format mismatch");
     }
@@ -363,6 +413,8 @@ export class D1Store {
     });
     const serialized = JSON.stringify(next);
     const digest = await hashText(serialized);
+    const chunks = snapshotParts(serialized);
+    const stateValue = chunks.length > 0 ? CHUNKED_SNAPSHOT_MARKER : serialized;
     // D1 batch is a transaction. The immutable unique day key prevents
     // competing publishers from overwriting one another.
     const writes = await this.db.batch([
@@ -375,11 +427,19 @@ export class D1Store {
       ),
       this.p(
         "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
-        day, serialized, digest, this.now()
+        day, stateValue, digest, this.now()
       ),
-      // Publication and cleanup commit atomically: frozen submissions no
-      // longer need retention after the immutable snapshot is stored.
+      ...chunks.map((chunk, index) => this.p(
+        "INSERT OR IGNORE INTO snapshot_chunks(day,chunk_index,chunk_data) " +
+        "SELECT ?,?,? WHERE EXISTS (" +
+        "SELECT 1 FROM snapshots WHERE day=? AND sha256=? AND state_json=?)",
+        day, index, chunk, day, digest, CHUNKED_SNAPSHOT_MARKER
+      )),
+      // Snapshot, chunks, and removal of source identifying posts are one
+      // atomic transaction: never erase information needed for a retry.
       this.p("DELETE FROM closed_posts WHERE day=?", day),
+      this.p("DELETE FROM orphaned_posts WHERE day=?", day),
+      this.p("DELETE FROM posts WHERE day=?", day),
     ]);
     const stored = await this.snapshot(day);
     if (!stored) throw new Error("snapshot write was not committed");
