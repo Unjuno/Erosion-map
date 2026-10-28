@@ -1,19 +1,13 @@
 import { advanceOneDay } from "./engine.js";
 import { nextIsoDay } from "./calendar.js";
 import { demoSeed } from "./demo-data.js";
+import { loadPublishedArchive } from "./archive.js";
 
 const id = (key) => document.getElementById(key);
 const countText = (number) => Number(number).toLocaleString("ja-JP");
 let entries = [];
 let selectedSnapshots = [];
 
-async function getJSON(url) {
-  const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
-  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-    throw new Error("snapshot source unavailable");
-  }
-  return response.json();
-}
 function fakeHistory() {
   const output = [demoSeed];
   for (let index = 0; index < 12; index++) {
@@ -21,52 +15,6 @@ function fakeHistory() {
     output.push(advanceOneDay(last, nextIsoDay(last.date)));
   }
   return output;
-}
-async function historyFromAPI() {
-  const index = await getJSON("./api/history");
-  if (!Array.isArray(index.days) || index.days.length === 0) {
-    throw new Error("no finalized states");
-  }
-  const days = index.days.slice(0, 30).reverse().map((entry) => entry.day);
-  if (days.some((date) => !/^\d{4}-\d{2}-\d{2}$/.test(date))) {
-    throw new Error("invalid API history");
-  }
-  const states = [];
-  for (let start = 0; start < days.length; start += 5) {
-    const items = await Promise.all(days.slice(start, start + 5)
-      .map(async (day) => (await getJSON("./api/state?date=" +
-        encodeURIComponent(day))).state));
-    states.push(...items);
-  }
-  return states;
-}
-async function historyFromStatic() {
-  const index = await getJSON("./data/index.json");
-  if (!Array.isArray(index) || index.length === 0) throw new Error("no static history");
-  const days = index.slice(-30).map((entry) => entry.date);
-  if (days.some((date) => !/^\d{4}-\d{2}-\d{2}$/.test(date))) {
-    throw new Error("invalid static history");
-  }
-  const states = [];
-  for (let start = 0; start < days.length; start += 5) {
-    const items = await Promise.all(days.slice(start, start + 5)
-      .map((day) => getJSON("./data/state-" + encodeURIComponent(day) + ".json")));
-    states.push(...items);
-  }
-  return states;
-}
-function validateStates(states) {
-  if (!Array.isArray(states) || states.length === 0) throw new Error("empty states");
-  for (const state of states) {
-    if (typeof state.date !== "string" || !Array.isArray(state.cells)) {
-      throw new Error("malformed snapshot");
-    }
-    if (state.cells.some((cell) => !Number.isSafeInteger(cell.n) ||
-      cell.n < 1 || typeof cell.char !== "string")) {
-      throw new Error("invalid cells");
-    }
-  }
-  return states;
 }
 function calcRanking(states) {
   const latest = states[states.length - 1];
@@ -140,15 +88,12 @@ async function setup() {
   let source = "合成デモ";
   let states;
   try {
-    states = validateStates(await historyFromAPI());
-    source = "DBで確定した公開スナップショット";
+    const archive = await loadPublishedArchive({ limit: 30 });
+    states = archive.states;
+    source = archive.source === "api"
+      ? "DBで確定した公開スナップショット" : "静的公開スナップショット";
   } catch {
-    try {
-      states = validateStates(await historyFromStatic());
-      source = "静的公開スナップショット";
-    } catch {
-      states = fakeHistory();
-    }
+    states = fakeHistory();
   }
   selectedSnapshots = states;
   entries = calcRanking(states);

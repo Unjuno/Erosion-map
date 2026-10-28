@@ -1,5 +1,6 @@
 import { advanceOneDay, normalizeGlyph } from "./engine.js";
 import { demoSeed } from "./demo-data.js";
+import { loadPublishedArchive } from "./archive.js";
 import { buildDailySnapshot } from "./daily.js";
 import { nextIsoDay } from "./calendar.js";
 
@@ -516,35 +517,20 @@ function activateArchive() {
 }
 async function findPublishedArchive() {
   try {
-    const status = await fetch("./api/status", { credentials: "same-origin" });
-    if (!status.ok || !status.headers.get("content-type")?.includes("application/json")) return;
-    const historyResponse = await fetch("./api/history", { credentials: "same-origin" });
-    if (!historyResponse.ok) return;
-    const history = await historyResponse.json();
-    const days = (history.days ?? []).slice(0, 21).reverse();
-    const archived = [];
-    for (const record of days) {
-      const response = await fetch("./api/state?date=" + encodeURIComponent(record.day),
-        { credentials: "same-origin" });
-      if (!response.ok) return;
-      const parsed = await response.json();
-      const state = parsed.state;
-      if (!state || !Array.isArray(state.cells) || !state.bounds) return;
-      archived.push(state);
-    }
-    if (archived.length === 0) return;
-    archivedSnapshots = archived;
+    const archive = await loadPublishedArchive({ limit: 21 });
+    archivedSnapshots = archive.states;
     const button = document.createElement("button");
     button.type = "button";
     button.id = "toggleArchive";
-    button.textContent = "公開アーカイブを見る";
+    button.textContent = archive.source === "api"
+      ? "公開アーカイブを見る" : "静的履歴を見る";
     button.addEventListener("click", () => {
       if (liveMode) activateDemo();
       else activateArchive();
     });
     document.querySelector(".map-toolbar").append(button);
   } catch {
-    // Static exports intentionally work without the optional HTTP backend.
+    // Static demo has no published archive: keep the synthetic time line.
   }
 }
 void findPublishedArchive();
