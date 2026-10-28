@@ -62,3 +62,16 @@ test("the map exposes three explicitly labeled, user-visible simulation models",
     assert.ok(html.includes('value="'+name+'"'), name);
   }
 });
+
+test("development preview labels do not claim an unlaunched public Sites deployment", async () => {
+  const html = await readFile(join("site", "index.html"), "utf8");
+  const mapJS = await readFile(join("site", "app.js"), "utf8");
+  const accountJS = await readFile(join("site", "account.js"), "utf8");
+  assert.match(html, /DEVELOPMENT PREVIEW/);
+  assert.match(html, /Sites候補（未承認）/);
+  assert.match(html, /ブラウザ内だけで動作し、保存されません|ここで試す投稿は保存されません/);
+  assert.doesNotMatch(html, /現行：同文字を加算/);
+  assert.doesNotMatch(mapJS, /LIVE SIMULATION \/ LOCAL DEMO/);
+  assert.doesNotMatch(mapJS, /PUBLISHED SNAPSHOTS \/ DEVELOPMENT DATABASE/);
+  assert.match(accountJS, /一般公開済みとは判断できません/);
+});
