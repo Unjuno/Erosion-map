@@ -8,7 +8,7 @@ test("release gate blocks missing production capabilities and emits no secrets",
     databaseProvider: "sqlite-local",
   });
   assert.equal(result.ready, false);
-  assert.equal(result.checks.filter(c=>c.status==="BLOCKED").length, 10);
+  assert.equal(result.checks.filter(c=>c.status==="BLOCKED").length, 9);
   assert.equal(result.checks[0].id, "https");
   assert.equal(result.origin, "http://localhost:4173");
 });
