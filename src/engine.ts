@@ -158,13 +158,18 @@ function advanceBoundedDense(previous: Snapshot, nextDate: string, floor: 0 | 1)
   const owners = new Uint32Array(length);
   const strengths = new Float64Array(length);
   const ids = new Map<string, number>();
+  const normalizations = new Map<string, string>();
   const glyphs: string[] = [""];
   for (const cell of previous.cells) {
     assertInteger(cell.x, "cell.x");
     assertInteger(cell.y, "cell.y");
     assertPositive(cell.n, "cell.n");
     if (!inside(b, cell.x, cell.y)) throw new RangeError("cell outside bounds");
-    const char = normalizeGlyph(cell.char);
+    let char = normalizations.get(cell.char);
+    if (char === undefined) {
+      char = normalizeGlyph(cell.char);
+      normalizations.set(cell.char, char);
+    }
     let owner = ids.get(char);
     if (owner === undefined) {
       owner = glyphs.length;
@@ -186,7 +191,7 @@ function advanceBoundedDense(previous: Snapshot, nextDate: string, floor: 0 | 1)
   // as resolveCollision, but without per-cell allocations.
   const addClaim = (index: number, resident: boolean): void => {
     if (index < 0) return;
-    const owner = owners[index];
+    const owner = owners[index]!;
     if (owner === 0) return;
     const strength = resident ? strengths[index] : Math.max(strengths[index] - 1, floor);
     if (strength <= 0) return;
