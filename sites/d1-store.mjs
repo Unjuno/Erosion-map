@@ -437,6 +437,22 @@ export class D1Store {
     const digest = await hashText(serialized);
     const chunks = snapshotParts(serialized);
     const stateValue = chunks.length > 0 ? CHUNKED_SNAPSHOT_MARKER : serialized;
+    // Each INSERT can carry two chunks via a SELECT/UNION. This reduces
+    // per-invocation D1 query count while preserving per-value row limits.
+    const chunkWrites = [];
+    for (let index = 0; index < chunks.length; index += 2) {
+      const group = chunks.slice(index, index + 2);
+      const query = group.map(() =>
+        "SELECT ?,?,? FROM snapshots WHERE day=? AND sha256=? AND state_json=?"
+      ).join(" UNION ALL ");
+      const params = group.flatMap((chunk, offset) =>
+        [day, index + offset, chunk, day, digest, CHUNKED_SNAPSHOT_MARKER]
+      );
+      chunkWrites.push(this.p(
+        "INSERT OR IGNORE INTO snapshot_chunks(day,chunk_index,chunk_data) " + query,
+        ...params
+      ));
+    }
     // D1 batch is a transaction. The immutable unique day key prevents
     // competing publishers from overwriting one another.
     const writes = await this.db.batch([
@@ -451,12 +467,7 @@ export class D1Store {
         "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
         day, stateValue, digest, this.now()
       ),
-      ...chunks.map((chunk, index) => this.p(
-        "INSERT OR IGNORE INTO snapshot_chunks(day,chunk_index,chunk_data) " +
-        "SELECT ?,?,? WHERE EXISTS (" +
-        "SELECT 1 FROM snapshots WHERE day=? AND sha256=? AND state_json=?)",
-        day, index, chunk, day, digest, CHUNKED_SNAPSHOT_MARKER
-      )),
+      ...chunkWrites,
       // Snapshot, chunks, and removal of source identifying posts are one
       // atomic transaction: never erase information needed for a retry.
       this.p("DELETE FROM closed_posts WHERE day=?", day),
