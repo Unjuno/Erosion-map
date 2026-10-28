@@ -5,22 +5,28 @@ import { readFile } from "node:fs/promises";
 import { D1Store, hashText } from "../sites/d1-store.mjs";
 
 /** Minimal D1 API emulation backed by real SQLite for SQL/data-integrity tests. */
-async function makeFixture(instant = new Date("2026-10-21T00:00:00.000Z")) {
+async function makeFixture(instant = new Date("2026-10-21T00:00:00.000Z"), options = {}) {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON");
   sqlite.exec(await readFile("migrations/0001_d1_schema.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0002_day_closure.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0003_closed_post_capture.sql", "utf8"));
+  sqlite.exec(await readFile("migrations/0004_archival_and_chunked_states.sql", "utf8"));
   const adapt = (parameters) => parameters.map((parameter) =>
     parameter instanceof ArrayBuffer ? new Uint8Array(parameter) : parameter);
+  const asD1 = (row) => {
+    if (!options.blobArrays || !row) return row;
+    return row.publicKey instanceof Uint8Array
+      ? { ...row, publicKey: Array.from(row.publicKey) } : row;
+  };
   const statement = (sql, parameters = []) => ({
     sql, parameters,
     bind(...next) { return statement(sql, next); },
     async first() {
-      return sqlite.prepare(sql).get(...adapt(parameters)) ?? null;
+      return asD1(sqlite.prepare(sql).get(...adapt(parameters)) ?? null);
     },
     async all() {
-      return { results: sqlite.prepare(sql).all(...adapt(parameters)) };
+      return { results: sqlite.prepare(sql).all(...adapt(parameters)).map(asD1) };
     },
     async run() {
       const results = sqlite.prepare(sql).run(...adapt(parameters));
