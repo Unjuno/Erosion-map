@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="1日1文字、世界を侵食する。受動型侵食マップの公開開発デモ。">
+  <meta name="description" content="1日1文字、世界を侵食する。受動型侵食マップの開発用シミュレーション。">
   <meta name="theme-color" content="#101820">
   <title>EROSION MAP — 1日1文字の侵食マップ</title>
   <link rel="stylesheet" href="./styles.css">
@@ -35,7 +35,7 @@
           ここでは「受け取るマス」が支配者を決める侵食シミュレーションを試せます。</p>
         <div class="hero-notice" role="note">
           <span class="notice-icon" aria-hidden="true">i</span>
-          <span>この画面の投稿プレビューはブラウザ内だけで動作し、保存されません。実際の投稿は「投稿する」から行います。</span>
+          <span>これは開発用シミュレーションです。ここで試す投稿は保存されません。実際の投稿機能は、Sitesの接続・認証・公開前検証が完了した環境でのみ利用できます。</span>
         </div>
       </section>
 
@@ -48,7 +48,7 @@
           <div class="map-panel">
             <div class="panel-top">
               <div>
-                <p class="panel-label">LIVE SIMULATION / LOCAL DEMO</p>
+                <p class="panel-label">SIMULATION / LOCAL DEMO</p>
                 <h2>侵食マップ <span class="slim">/ WORLD 001</span></h2>
               </div>
               <div class="stats-compact" aria-live="polite">
@@ -65,9 +65,9 @@
               </div>
               <label class="rule-selector" for="modelSelect">計算方式
                 <select id="modelSelect" aria-label="侵食ルール比較">
-                  <option value="legacy">現行：同文字を加算（N=1停止）</option>
+                  <option value="legacy">従来案：同文字を加算（N=1停止）</option>
                   <option value="bounded">比較：最大影響を採用（N=1停止）</option>
-                  <option value="playable">試験：最大影響＋N=1も拡大</option>
+                  <option value="playable">Sites候補（未承認）：最大影響＋N=1拡大</option>
                 </select>
               </label>
               <form id="goForm" class="coordinate-form">
@@ -160,7 +160,7 @@
           <article><span>02</span><h3>衝突と相殺</h3><p>異なる文字同士は勢力値を打ち消し、残りが0なら空白になります。</p></article>
           <article><span>03</span><h3>一日一世代</h3><p>前日の状態だけを参照して同期計算。日付ごとの変化を再現できます。</p></article>
         </div>
-        <p class="rule-disclaimer">※ 同文字の合算・相殺順序・包囲保持などは暫定実装です。通常のN=1投稿は現在の数式では広がりません。正式な仕様決定前に、<a href="https://github.com/Unjuno/Erosion-map/blob/main/docs/ALGORITHM.md" target="_blank" rel="noopener noreferrer">アルゴリズム仕様書</a>をご確認ください。</p>
+        <p class="rule-disclaimer">※ 同文字の合算・相殺順序・包囲保持などは暫定実装です。従来案ではN=1は広がりませんが、Sites候補では最低影響1により拡大します。いずれも正式なゲーム仕様としては未承認です。仕様決定前に、<a href="https://github.com/Unjuno/Erosion-map/blob/main/docs/ALGORITHM.md" target="_blank" rel="noopener noreferrer">アルゴリズム仕様書</a>をご確認ください。</p>
       </section>
     </main>
     <footer><span>EROSION MAP © OPEN DEVELOPMENT</span><span>DESIGNED TO EVOLVE · <a href="https://github.com/Unjuno/Erosion-map">GITHUB ↗</a></span></footer>
