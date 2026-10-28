@@ -32,6 +32,9 @@ jobs:
       - name: Constrained V8 heap 365-generation smoke (Node 22)
         if: matrix.node == '22'
         run: node --max-old-space-size=96 scripts/benchmark-365.mjs
+      - name: D1-style 365-day publication and storage audit (Node 22)
+        if: matrix.node == '22'
+        run: node scripts/benchmark-d1-365.mjs
       - name: Audit production dependency vulnerabilities
         run: npm audit --omit=dev --audit-level=high
       - name: Upload static preview (no DB or account data)
