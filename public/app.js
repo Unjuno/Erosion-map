@@ -412,9 +412,10 @@ canvas.addEventListener("keydown", (event) => {
   }[event.key];
   if (arrow !== undefined) {
     event.preventDefault();
+    const bounds = current().bounds;
     navigateTo(
-      clamp(selected.x + arrow[0], seed.bounds.minX, seed.bounds.maxX),
-      clamp(selected.y + arrow[1], seed.bounds.minY, seed.bounds.maxY),
+      clamp(selected.x + arrow[0], bounds.minX, bounds.maxX),
+      clamp(selected.y + arrow[1], bounds.minY, bounds.maxY),
     );
   } else if (event.key === "+" || event.key === "=") {
     event.preventDefault(); zoomAt(1.35);
@@ -449,7 +450,9 @@ byId("previewForm").addEventListener("submit", (event) => {
     viewY = y;
     updatePanels();
     notice.textContent = "プレビュー更新済み（保存なし）。" +
-      (n === 1 ? " 通常N=1は周囲へ拡大しません。" : "");
+      (n === 1 && currentRules().minimumOutgoingInfluence === 0
+        ? " この計算方式では通常N=1は周囲へ拡大しません。"
+        : "");
   } catch (error) {
     notice.textContent = error instanceof Error ? error.message : "入力エラー";
   }
