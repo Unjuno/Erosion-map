@@ -240,6 +240,9 @@ export async function handleRequest(request, env, context = {}) {
       }
     }
     if (path === "/api/status" && method === "GET") {
+      // Lightweight maintenance for installations where scheduled triggers
+      // are not offered. Cleanup is deterministic and idempotent.
+      await store.pruneExpirations();
       await store.initialize();
       // Opportunistic fallback when the Sites runtime has no cron trigger.
       // Limit to one day per request; scheduled events can catch up faster.
@@ -396,6 +399,9 @@ export default {
   async scheduled(_event, env, context) {
     const conf = configuration(env);
     const store = new D1Store(env.DB, { rulesDefault: conf.rulesDefault });
-    context.waitUntil(store.publishClosedDays(new Date(), 32));
+    context.waitUntil((async () => {
+      await store.pruneExpirations();
+      await store.publishClosedDays(new Date(), 32);
+    })());
   },
 };

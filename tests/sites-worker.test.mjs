@@ -260,3 +260,25 @@ test("Sites default rule profile grows a normal N1 submission without unsafe sum
     });
   } finally { f.close(); }
 });
+
+
+test("Sites maintenance removes expired sessions and challenges on status request", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    // Test clock is fixed in 2026; these records expired long before that.
+    f.sqlite.prepare(
+      "INSERT INTO users(id,created_at) VALUES(?,?)"
+    ).run("example-user", 1000);
+    f.sqlite.prepare(
+      "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)"
+    ).run("c".repeat(64), "example-user", 1000);
+    f.sqlite.prepare(
+      "INSERT INTO challenges(token_hash,kind,challenge,user_id,expires_at) VALUES(?,?,?,?,?)"
+    ).run("d".repeat(64), "authenticate", "irrelevant-challenge-token-at-least-thirty-two", null, 1000);
+    const response = await f.fetcher("/api/status");
+    assert.equal(response.status, 200);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS total FROM sessions").get().total, 0);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS total FROM challenges").get().total, 0);
+  } finally { f.close(); }
+});
