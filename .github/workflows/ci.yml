@@ -19,8 +19,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
-      - name: Install exact direct dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
       - name: Engine, WebAuthn, SQLite, site tests
         run: npm test
       - name: Synthetic performance measurement (Node 22)

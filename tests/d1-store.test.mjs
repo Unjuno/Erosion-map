@@ -66,6 +66,19 @@ test("D1 schema, initialization and public snapshot checksums", async () => {
   } finally { f.close(); }
 });
 
+test("D1 recovers a post accepted before the first snapshot after a delayed start", async () => {
+  const f = await makeFixture(new Date("2026-10-23T00:00:00Z"));
+  try {
+    await f.store.registerCredential("player", {
+      id: "key", publicKey: new Uint8Array([1]), counter: 0,
+    }, true);
+    await f.store.submit("player", "2026-10-20", 0, 0, "光");
+    await f.store.publishClosedDays();
+    const published = await f.store.snapshot("2026-10-20");
+    assert.ok(published?.state.cells.some((cell) => cell.char === "光"));
+  } finally { f.close(); }
+});
+
 test("D1 registration, one-use challenges, sessions and credential deletion", async () => {
   const f = await makeFixture();
   try {

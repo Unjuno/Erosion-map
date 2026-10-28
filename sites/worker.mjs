@@ -407,6 +407,9 @@ export async function handleRequest(request, env, context = {}) {
         throw new RequestError(429, "too many post updates");
       }
       const body = await bodyJSON(request);
+      // Establish a baseline before accepting the first post, including when
+      // clients use the API without visiting the map or status endpoints.
+      await store.initialize();
       const day = dayAtInstant(store.clock());
       const saved = await store.submit(userId, day, body.x, body.y, body.char);
       return json(200, { saved });

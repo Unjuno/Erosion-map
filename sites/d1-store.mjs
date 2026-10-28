@@ -291,16 +291,24 @@ export class D1Store {
   async initialize(instant = this.clock()) {
     const existing = await this.latestState();
     if (existing) return existing;
-    const day = previousDay(dayAtInstant(instant));
+    // Recover legacy databases that accepted posts before any snapshot was
+    // initialized, including anonymized posts from deleted accounts.
+    const pending = await this.first(
+      "SELECT MIN(day) AS day FROM (SELECT day FROM posts UNION ALL SELECT day FROM orphaned_posts)"
+    );
+    const today = dayAtInstant(instant);
+    const firstDay = pending?.day && pending.day < today ? pending.day : today;
+    const day = previousDay(firstDay);
     const state = {
       date: day, bounds: boundsForUserCount(await this.usersCount()), cells: [],
     };
     const text = JSON.stringify(state);
     await this.run(
-      "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+      "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) " +
+      "SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM snapshots)",
       day, text, await hashText(text), this.now()
     );
-    return (await this.snapshot(day)).state;
+    return await this.latestState();
   }
   async defaultRules() {
     const row = await this.first(
