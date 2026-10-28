@@ -1,3 +1,4 @@
+import { simulatedAuthenticator } from "./helpers/authenticator.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -10,12 +11,14 @@ const clock = () => new Date("2026-10-20T14:00:00.000Z");
 function fixture() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON");
+  const adapt = (values) => values.map((v) =>
+    v instanceof ArrayBuffer ? new Uint8Array(v) : v);
   const wrap = (sql, args = []) => ({
     bind(...params) { return wrap(sql, params); },
-    async first() { return sqlite.prepare(sql).get(...args) ?? null; },
-    async all() { return { results: sqlite.prepare(sql).all(...args) }; },
+    async first() { return sqlite.prepare(sql).get(...adapt(args)) ?? null; },
+    async all() { return { results: sqlite.prepare(sql).all(...adapt(args)) }; },
     async run() {
-      const result = sqlite.prepare(sql).run(...args);
+      const result = sqlite.prepare(sql).run(...adapt(args));
       return { success: true, meta: { changes: Number(result.changes) } };
     },
   });
@@ -155,5 +158,60 @@ test("Sites worker serves map, post, ranking and policy through asset binding", 
       assert.match(response.headers.get("content-security-policy"), /script-src 'self'/);
       assert.equal(f.staticHits.at(-1), asset);
     }
+  } finally { f.close(); }
+});
+
+
+function cookieFromHeader(response, name) {
+  const header = response.headers.get("set-cookie") ?? "";
+  const match = new RegExp("(?:^|,\\s*)" + name + "=([^;,\\s]+)").exec(header);
+  assert.ok(match, "missing Set-Cookie for " + name);
+  return name + "=" + match[1];
+}
+
+test("Sites D1 worker registers a signed passkey, accepts a post and reauthenticates", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const authenticator = simulatedAuthenticator("example.org");
+    const begun = await f.post("/api/auth/register/start", {});
+    assert.equal(begun.status, 200);
+    const options = (await begun.json()).options;
+    const challengeCookie = cookieFromHeader(begun, "__Host-erosion-challenge");
+    const verified = await f.post("/api/auth/register/finish", {
+      credential: authenticator.register(options.challenge, origin),
+    }, { headers: { Cookie: challengeCookie } });
+    assert.equal(verified.status, 200, JSON.stringify(await verified.clone().json()));
+    const sessionCookie = cookieFromHeader(verified, "__Host-erosion-session");
+
+    const me = await f.fetcher("/api/me", { headers: { Cookie: sessionCookie } });
+    assert.equal((await me.json()).authenticated, true);
+
+    const saved = await f.post("/api/post", { x: 1, y: 2, char: "星" },
+      { headers: { Cookie: sessionCookie } });
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json()).saved.revision, 1);
+
+    const logout = await f.post("/api/auth/logout", {},
+      { headers: { Cookie: sessionCookie } });
+    assert.equal(logout.status, 200);
+    const denied = await f.post("/api/post", { x: 1, y: 2, char: "空" },
+      { headers: { Cookie: sessionCookie } });
+    assert.equal(denied.status, 401);
+
+    const signin = await f.post("/api/auth/login/start", {});
+    assert.equal(signin.status, 200);
+    const loginOptions = (await signin.json()).options;
+    const loginChallenge = cookieFromHeader(signin, "__Host-erosion-challenge");
+    const loginResult = await f.post("/api/auth/login/finish", {
+      credential: authenticator.authenticate(
+        loginOptions.challenge, options.user.id, origin, 1
+      ),
+    }, { headers: { Cookie: loginChallenge } });
+    assert.equal(loginResult.status, 200,
+      JSON.stringify(await loginResult.clone().json()));
+    const relogged = cookieFromHeader(loginResult, "__Host-erosion-session");
+    const after = await f.fetcher("/api/me", { headers: { Cookie: relogged } });
+    assert.equal((await after.json()).authenticated, true);
   } finally { f.close(); }
 });
