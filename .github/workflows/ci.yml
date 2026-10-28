@@ -1,14 +1,35 @@
-name: Engine CI
+name: Engine and Site CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: '22'
-      - run: npm install --no-audit --no-fund
-      - run: npm test
+          node-version: ${{ matrix.node }}
+      - name: Install exact direct dependencies
+        run: npm install --no-audit --no-fund
+      - name: Engine, WebAuthn, SQLite, site tests
+        run: npm test
+      - name: Audit production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+      - name: Upload static preview (no DB or account data)
+        if: matrix.node == '22'
+        uses: actions/upload-artifact@v4
+        with:
+          name: erosion-map-static-preview
+          path: site/
+          if-no-files-found: error
+          retention-days: 14
