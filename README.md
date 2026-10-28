@@ -1,116 +1,82 @@
-# EROSION MAP — 1日1文字 侵食マップシステム
+# EROSION MAP — 1日1文字 侵食マップ
 
-[公開ソース](https://github.com/Unjuno/Erosion-map) · [自動テスト](https://github.com/Unjuno/Erosion-map/actions) · [アルゴリズム仕様](docs/ALGORITHM.md)
+[ソースコード](https://github.com/Unjuno/Erosion-map) · [自動テスト](https://github.com/Unjuno/Erosion-map/actions) · [侵食ルール](docs/ALGORITHM.md)
 
-パスキーでログインしたユーザーが1日1文字を座標指定で投稿し、**受け取り側のマス**が上下左右からの影響を受けて文字と勢力値を更新する日次シミュレーション。
+1日に1文字だけ座標を指定して投稿し、上下左右からの影響を**受け取る側のマス**が計算して日ごとに変化する公開マップ。メールアドレス・パスワードの入力に代わりパスキー（WebAuthn）認証を利用する設計です。
 
-> **開発ステータス：ローカル試作版／本番未公開**
-> 侵食エンジン、UI、開発用SQLite保存、WebAuthn APIは実装されていますが、
-> **GPT Sitesへのデプロイ・本番DB・端末実機確認・運用監査は未完了**です。
-> アルゴリズムの未承認規則と長期オーバーフローが残るため、本番投稿受付は禁止です。
+## 構成と状態
 
-## 実装済みの機能
-
-| 項目 | 状態・制限 |
+| 領域 | 実装 |
 |---|---|
-| 500×500のCanvas表示 | ズーム、ドラッグ、座標移動、マス選択 |
-| デモマップ | 13日の合成履歴、再生速度、ランキング、仮投稿（保存なし） |
-| 侵食・衝突 | TypeScriptによる決定的な一日一世代の計算。複数ルールは暫定 |
-| 投稿データ処理 | 1ユーザー1日1件、同日更新でrevisionを加算 |
-| 日次状態 | 日本時間、トランザクション、日付順、重複実行の冪等化 |
-| SQLite | Node.js単一ノード用の開発アダプター、実験的APIに依存 |
-| WebAuthn | メール・パスワード不要の登録、追加、ログイン、ログアウト。実機検証は未 |
-| 公開履歴 | 認証情報を除くJSON静的出力。SHA-256照合 |
-| ランキング | 最新マス数、N合計、読み込んだ直近30日の出現日数 |
-| 情報の取り扱いページ | 開発版案内のみ。正式な規約・プライバシーポリシーではない |
+| マップ | 500×500から開始、ズーム・パン・セル選択・URL座標移動 |
+| 履歴とランキング | 日付再生、支配マス・N合計・履歴内出現日数 |
+| 侵食エンジン | TypeScriptで決定的に1日1世代を計算 |
+| パスキー | 登録・追加・ログイン・ログアウト・再認証後のアカウント削除 |
+| 投稿 | 1ユーザー/日1件、同日の変更は最終revisionを採用 |
+| DB（開発用） | Node.js実験的node:sqlite、単一ノード |
+| DB（Sites対応） | sites/d1-store.mjs、D1 schema migration |
+| Sites API | sites/worker.mjs、Fetch API / WebAuthn / D1 / 静的Assets |
+| 毎日の確定 | JST日付境界、状態スナップショットの不変化、再実行の重複防止 |
+| テスト | Node 22/24、模擬WebAuthn署名・D1互換SQL・API・数値計算・静的表示 |
 
-## 起動
+**現状は「コードの開発版」です。GPT Sitesでの実際のデプロイ、本番D1の準備、実機パスキー認証とセキュリティ監査はまだ実施していません。** CI成功だけを本番公開の合図にしないでください。
 
-**Node.js 22以上、npm** が必要です。TypeScript 5.8.3、
-\`@simplewebauthn/server\` 14.0.3、Node標準の実験的 \`node:sqlite\` を使用します。
+## ローカル開発
 
-\`\`\`bash
-npm install
-npm test             # build + static asset test + engine/DB/API/WebAuthn tests
-npm run dev          # http://127.0.0.1:4173 （静的デモのみ）
-npm run dev:full     # http://localhost:4173 （開発用API + SQLite + パスキー）
-npm run job          # JSTで締切済みの日のsnapshotを確定
-npm run export:states # site/data/state-YYYY-MM-DD.json 等に公開状態を出力
-\`\`\`
-
-\`npm run dev:full\` はローカル開発サーバーです。起動中は1時間ごとに締切済み日付を確認します。
-最初の起動で開発用SQLiteファイルが作られ、ログイン・投稿フォームは
-\`http://localhost:4173/submit\` にあります。データを公開サービスに移行する前に
-保存形式、バックアップ、削除フローを決定してください。
-
-## ページ
-
-- \`/\` — 侵食マップと履歴再生。利用できれば公開DBの履歴へ切替可能。
-- \`/submit\` — パスキー登録・ログイン・投稿（開発用バックエンドが必要）。
-- \`/ranking\` — 勢力ランキング。公開JSONがなければ合成デモで表示。
-- \`/policy\` — **未発効**の開発用データ取り扱い案内。
-
-静的書き出しには \`index.html\`、\`account.html\`、\`ranking.html\`、
-\`policy.html\` を含みます。拡張子なしURLはローカルHTTPサーバーが提供する
-ルートであり、静的ホストにはRewrite設定が必要な場合があります。
-
-## リポジトリ構成
-
-\`\`\`text
-src/                  侵食エンジン・投稿整合性・日付計算
-server/               開発用 SQLite ストア、パスキーHTTP API
-public/               Canvas・投稿・ランキング・ポリシー画面
-scripts/              静的ビルド、ローカルサーバー、日次処理、公開JSON出力
-tests/                ユニット、DB接続、署名付き仮想認証器、公開データ検証
-docs/                 公開用仕様・日次処理・アルゴリズム比較
-.github/workflows/ci.yml  GitHub Actions
-\`\`\`
-
-## リリースを止めている問題
-
-- [#1](https://github.com/Unjuno/Erosion-map/issues/1): **通常投稿N=1はN−1=0となり、侵食が始まらない。**
-- [#2](https://github.com/Unjuno/Erosion-map/issues/2): **多勢力の相殺、同文字合算、現住者防御、同期更新を正式決定する。**
-- [#3](https://github.com/Unjuno/Erosion-map/issues/3): **同文字合算によりNが指数的に増幅し、単一N3から52日目に安全整数を超える。**
-
-未確定ルールは本番仕様ではなく、試作の挙動として明記しています。
-本番化前には最低365日分の検証と、目標環境の機能調査が必要です。
-
-## セキュリティ
-
-公開リポジトリにユーザーの個人情報・認証用の秘密情報・SQLiteファイル・接続文字列をコミットしないでください。
-パスキーの秘密鍵はサーバーでは扱いません。開発HTTPサーバーのCSRF防御、
-IP単位の簡易レート制限、Cookieは本番環境での安全性を保証しません。
-GPT Sitesの内蔵DB・WebAuthn・定期実行に関する実際の提供状況は未検証です。
-
-**ライセンスは未設定**です。公開ソースであることと自由利用ライセンスがあることは異なります。
-
-
-### 侵食ルールを比較する機能
-
-マップ画面の「計算方式」で3つの試験パターンを比較できます。
-
-- 現行（同文字を加算・N1は侵食停止）：従来の暫定ルール。長期オーバーフローあり。
-- 最大影響（N1は停止）：同文字候補のうち最大のものだけを採る。
-- 最大影響＋N1も拡大：最低影響1の**試験ルール**。正常な日次投稿N1から拡大可能。正式なゲーム仕様はまだ未承認。
-
-SQLiteでは、信頼されたローカル管理者が \`DAY=2026-11-01 SAME_GLYPH_MODE=max N1_OUTBOUND=1 npm run configure:day\` と設定することができます。
-APIからユーザーがルール変更することはできません。詳しくは [公開ルール比較資料](docs/RULE-COMPARISON.md) を参照してください。
-
-### アカウント管理とバックアップ（開発版）
-
-\`/submit\` でパスキーを追加・ログインしたあと、パスキー再認証を伴うアカウント削除を試せます。
-削除後も匿名の過去マップは公開履歴として残ります。
-\`npm run backup\` は \`.data/backups/\` にオンライン一貫バックアップを作り、SQLite整合性検査と最新スナップショットのSHA-256を検証します。
-実際の運用ではオフサイト保管・復元試験・アクセス制限を別途設計してください。
-
-
-## リリース前判定と性能検証
+Node.js 22以上、npm、TypeScript 5.8.3、@simplewebauthn/server 14.0.3、esbuild 0.25.12を想定しています。
 
 ```bash
-npm run preflight  # 本番環境条件を機械可読で確認。不足している場合は終了コード1
-npm run benchmark  # 侵食エンジンの計算時間と実行環境の計測
+npm install
+npm test              # エンジン・DB・API・Worker・UI の自動テスト
+npm run dev           # 静的デモ: http://127.0.0.1:4173
+npm run dev:full      # ローカルSQLite + パスキー: http://localhost:4173/submit
+npm run build:sites   # site/ に静的サイトと _worker.js を生成
+npm run preflight     # 本番公開の前提条件を判定（未確認なら失敗）
 ```
 
-`preflight` は意図的に実際の環境が揃うまで失敗します。これは検証済み環境を自動的に提供・構築するものではありません。Sites本番用DB、HTTPS公開ドメイン、WebAuthn実機確認、日次ジョブ、ルール承認、利用規約・プライバシー、バックアップ復元、セキュリティレビューと負荷試験が必要です。
+`site/` は生成物であり、Gitにコミットしません。公開リポジトリには生きたDB、個人情報、秘密鍵、セッションCookie、認証チャレンジを置かないでください。
 
-**計測例**（2026-10-28 GitHub Actions Ubuntu 26.04、Node 22.23.3、AMD EPYC 9V74、CI割当4論理コア、OS報告の実クロックは取得不可）：500×500、異なる文字の種3個、max+最低影響1の実験ルール、1回65世代、ウォームアップ1回、測定バッチ5回。所要時間の中央値 **3,325.517 ms**、範囲 **3,286.178〜3,368.409 ms**、65世代後の占有マスは23,119。実運用環境と負荷分布が異なるため、本番応答性能を保証しません。測定は [GitHub Actions](https://github.com/Unjuno/Erosion-map/actions/runs/40645731749) を参照。
+## GPT Sites向けの実装
+
+- `sites/worker.mjs` — Web標準の `fetch` / `scheduled` イベント
+- `sites/d1-store.mjs` — 非同期D1 APIへのアクセス
+- `migrations/0001_d1_schema.sql` — D1のテーブルと一意制約
+- `.openai/hosting.json` — DBバインディング名 `DB` の設定（サイトIDや秘密情報は含めない）
+- `scripts/build-sites-worker.mjs` — `site/_worker.js` のバンドル
+- `public/` — HTML、CSS、Canvas、パスキー投稿画面
+
+本番環境の設定には次が必要です。
+
+| 設定 | 意味 |
+|---|---|
+| `DB` | D1データベースバインディング、SQL migration適用済み |
+| `ASSETS` | `site/` の静的アセットを配信するバインディング |
+| `PUBLIC_ORIGIN` | 最終HTTPSサイトの正確なOrigin |
+| `RP_ID` | パスキーの依拠当事者ドメイン |
+| `SAME_GLYPH_MODE` | `sum` （従来）または `max` （実験） |
+| `N1_OUTBOUND` | `0` （従来）または `1` （実験、max限定） |
+
+サイトの公開操作・D1作成・実運用のスケジュール設定は、このソース管理とは別にGPT Sites上で行います。`scheduled` イベントが利用できない場合は閲覧時に1日分を補完する実装がありますが、厳密な時刻での無訪問更新を保証しません。
+
+## 侵食ルールの未確定点
+
+元の要件にある「通常投稿N=1」と「隣接への影響はN−1」は同時に採用すると、通常投稿が広がらないという矛盾があります。
+
+- [#1](https://github.com/Unjuno/Erosion-map/issues/1): N=1の伝播をどう実現するか
+- [#2](https://github.com/Unjuno/Erosion-map/issues/2): 多勢力相殺・同文字の合算などの正式ルール
+- [#3](https://github.com/Unjuno/Erosion-map/issues/3): 同文字加算に伴う長期数値オーバーフロー
+
+安全に動かせる比較用プロファイルとして `max + N1_OUTBOUND=1` を実装・検証しています。**元仕様を無断変更しないため本番デフォルトにはしていません。** [ルール比較](docs/RULE-COMPARISON.md)を参照してください。
+
+## 画面
+
+- `/`：マップ・過去履歴・座標指定・ズーム・デモ
+- `/submit`：パスキー認証と投稿
+- `/ranking`：ランキング
+- `/policy`：開発版の情報取り扱い。正式な利用規約・プライバシーポリシーではありません
+
+本番公開には運営者情報・個人情報の保持期間・お問い合わせ先・削除と復旧・広告に関する正式な方針が必要です。
+
+## セキュリティ・ライセンス
+
+開発用レート制限とCSRF防御は本番相当の脅威対策を保証しません。本番DBのバックアップ復元、実機WebAuthn、Origin/RP ID、DoS耐性、日次処理の排他性、負荷評価を公開前に確認してください。現時点でライセンスは未設定です。公開リポジトリは再利用許諾を意味しません。
