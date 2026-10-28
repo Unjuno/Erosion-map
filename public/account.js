@@ -85,7 +85,7 @@ function enableButtons() {
 }
 async function refresh() {
   try {
-    await api("/api/status");
+    const status = await api("/api/status");
     backendAvailable = true;
     const state = await api("/api/me");
     activeUser = state.authenticated;
@@ -96,8 +96,9 @@ async function refresh() {
       ? state.post.char + " (" + state.post.x + "," + state.post.y +
         ") / 変更 " + state.post.revision + " 回"
       : "投稿なし";
-    id("environmentNotice").textContent =
-      "開発用バックエンドに接続中。ユーザー情報はローカルSQLiteに保存されます。正式公開環境ではありません。";
+    id("environmentNotice").textContent = status.mode === "sites-d1"
+      ? "ChatGPT SitesのD1データベースに接続中です。投稿とパスキー情報はサーバーに保存されます。"
+      : "ローカル開発用SQLiteバックエンドに接続中です。正式公開環境ではありません。";
   } catch {
     backendAvailable = false;
     activeUser = false;
@@ -148,7 +149,7 @@ id("realPostForm").addEventListener("submit", (event) => {
 });
 id("deleteAccountButton").addEventListener("click", async () => {
   if (!window.confirm(
-    "アカウント、認証情報、未確定投稿、ログイン状態を削除します。公開済みマップの文字は残ります。続行しますか？"
+    "アカウント、認証情報、受付中の投稿、ログイン状態を削除します。締切済みの匿名投稿と公開済みマップの文字は残ります。続行しますか？"
   )) return;
   if (window.prompt("最終確認: DELETE と入力してください。", "") !== "DELETE") {
     setMessage("deleteMessage", "削除を取り消しました。");
