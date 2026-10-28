@@ -5,22 +5,29 @@ import { readFile } from "node:fs/promises";
 import { D1Store, hashText } from "../sites/d1-store.mjs";
 
 /** Minimal D1 API emulation backed by real SQLite for SQL/data-integrity tests. */
-async function makeFixture(instant = new Date("2026-10-21T00:00:00.000Z")) {
+async function makeFixture(instant = new Date("2026-10-21T00:00:00.000Z"), options = {}) {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON");
   sqlite.exec(await readFile("migrations/0001_d1_schema.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0002_day_closure.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0003_closed_post_capture.sql", "utf8"));
+  sqlite.exec(await readFile("migrations/0004_archival_and_chunked_states.sql", "utf8"));
+  sqlite.exec(await readFile("migrations/0005_durable_rate_limits.sql", "utf8"));
   const adapt = (parameters) => parameters.map((parameter) =>
     parameter instanceof ArrayBuffer ? new Uint8Array(parameter) : parameter);
+  const asD1 = (row) => {
+    if (!options.blobArrays || !row) return row;
+    return row.publicKey instanceof Uint8Array
+      ? { ...row, publicKey: Array.from(row.publicKey) } : row;
+  };
   const statement = (sql, parameters = []) => ({
     sql, parameters,
     bind(...next) { return statement(sql, next); },
     async first() {
-      return sqlite.prepare(sql).get(...adapt(parameters)) ?? null;
+      return asD1(sqlite.prepare(sql).get(...adapt(parameters)) ?? null);
     },
     async all() {
-      return { results: sqlite.prepare(sql).all(...adapt(parameters)) };
+      return { results: sqlite.prepare(sql).all(...adapt(parameters)).map(asD1) };
     },
     async run() {
       const results = sqlite.prepare(sql).run(...adapt(parameters));
@@ -205,7 +212,8 @@ test("day closure freezes incoming posts before daily calculation", async () => 
       f.store.submit("player", "2026-10-20", 5, 5, "月"), /sealed/);
     const published = await f.store.publishDay("2026-10-20");
     assert.equal(published.state.cells.length, 5);
-    assert.equal((await f.store.dailyPosts("2026-10-20"))[0].char, "星");
+    assert.deepEqual(await f.store.dailyPosts("2026-10-20"), [],
+      "published day no longer stores identifying user posts");
     assert.equal((await f.store.dayRules("2026-10-20")).sameGlyphMode, "max");
   } finally { f.close(); }
 });
@@ -266,5 +274,132 @@ test("sealed day survives account deletion; anonymous captured rows are purged o
     const replay = await f.store.publishDay("2026-10-20");
     assert.equal(replay.existed, true);
     assert.deepEqual(replay.state, result.state);
+  } finally { f.close(); }
+});
+
+test("native D1 numeric-array BLOB reads support passkeys and reject bad encodings", async () => {
+  const f = await makeFixture(undefined, { blobArrays: true });
+  try {
+    const bytes = new Uint8Array([0, 128, 255, 17, 42]);
+    await f.store.registerCredential("blob-player", {
+      id: "d1-credential", publicKey: bytes, counter: 1,
+      transports: ["internal"],
+    }, true);
+    const found = await f.store.credentialById("d1-credential");
+    assert.deepEqual([...found.publicKey], [...bytes]);
+    assert.deepEqual((await f.store.credentialsByUser("blob-player"))
+      .map((item) => [...item.publicKey]), [[...bytes]]);
+  } finally { f.close(); }
+});
+
+test("account deletion before an overdue day is sealed preserves anonymous final posts", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00.000Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00.000Z"));
+    for (const [user, id, char, x] of [
+      ["deleted-player", "key-delete", "光", 0],
+      ["remaining-player", "key-remain", "星", 20],
+    ]) {
+      await f.store.registerCredential(user, {
+        id, publicKey: new Uint8Array([10, 20]), counter: 0,
+      }, true);
+      await f.store.submit(user, "2026-10-20", x, 0, char);
+    }
+    await f.store.run("INSERT INTO site_settings(key,value) VALUES(?,?)",
+      "receiver_default", JSON.stringify({
+        sameGlyphMode: "max", minimumOutgoingInfluence: 1,
+      }));
+    // 2026-10-20 is already closed by JST date, but no closure INSERT ran.
+    await f.store.deleteUser("deleted-player");
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM orphaned_posts").get().n, 1);
+    const columns = f.sqlite.prepare("PRAGMA table_info(orphaned_posts)")
+      .all().map((row) => row.name);
+    assert.ok(!columns.includes("user_id"));
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM posts").get().n, 1);
+    const result = await f.store.publishDay("2026-10-20");
+    assert.equal(result.state.cells.length, 10);
+    assert.ok(result.state.cells.some(cell => cell.char === "光" && cell.x === 0));
+    assert.ok(result.state.cells.some(cell => cell.char === "星" && cell.x === 20));
+    for (const table of ["posts", "orphaned_posts", "closed_posts"]) {
+      assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM " + table).get().n, 0,
+        table + " must be purged after publication");
+    }
+    assert.equal((await f.store.publishDay("2026-10-20")).existed, true);
+  } finally { f.close(); }
+});
+
+test("deleting today's account does not preserve its still-editable post", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00.000Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00.000Z"));
+    await f.store.registerCredential("today-player", {
+      id: "key-today", publicKey: new Uint8Array([7]), counter: 0,
+    }, true);
+    await f.store.submit("today-player", "2026-10-22", 0, 0, "水");
+    await f.store.deleteUser("today-player");
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM orphaned_posts").get().n, 0);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM posts").get().n, 0);
+  } finally { f.close(); }
+});
+
+test("large Unicode map snapshots are stored in small atomic D1 rows and verified", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00.000Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00.000Z"));
+    const glyph = "a" + "\u035c".repeat(31); // One long grapheme, maximum accepted length.
+    const previous = {
+      date: "2026-10-19",
+      bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
+      cells: Array.from({ length: 21_000 }, (_, i) => ({
+        x: i % 200, y: Math.floor(i / 200), char: glyph, n: 1,
+      })),
+    };
+    const initialDigest = await hashText(JSON.stringify(previous));
+    // A synthetic large predecessor isolates the new day's D1 write/read
+    // path without storing an illegally large predecessor in the fixture.
+    const trueSnapshot = f.store.snapshot.bind(f.store);
+    f.store.latestState = async () => previous;
+    f.store.snapshot = async (day) => day === previous.date
+      ? { state: previous, sha256: initialDigest } : trueSnapshot(day);
+    await f.store.run("INSERT INTO site_settings(key,value) VALUES(?,?)",
+      "receiver_default", JSON.stringify({
+        sameGlyphMode: "max", minimumOutgoingInfluence: 1,
+      }));
+    const saved = await f.store.publishDay("2026-10-20");
+    assert.ok(Buffer.byteLength(JSON.stringify(saved.state), "utf8") > 2_000_000);
+    const marker = f.sqlite.prepare(
+      "SELECT state_json AS stateValue FROM snapshots WHERE day=?"
+    ).get("2026-10-20").stateValue;
+    assert.equal(marker, "@chunked-snapshot:v1");
+    const chunks = f.sqlite.prepare(
+      "SELECT chunk_data AS data FROM snapshot_chunks WHERE day=? ORDER BY chunk_index"
+    ).all("2026-10-20");
+    assert.ok(chunks.length >= 2);
+    for (const chunk of chunks) {
+      assert.ok(Buffer.byteLength(chunk.data, "utf8") <= 1_280_000,
+        "chunk size must remain below D1 2 MB row limit even for non-ASCII text");
+    }
+    const read = await f.store.snapshot("2026-10-20");
+    assert.equal(read.sha256, await hashText(JSON.stringify(saved.state)));
+    assert.deepEqual(read.state, saved.state);
+    f.sqlite.prepare("UPDATE snapshot_chunks SET chunk_data='broken' " +
+      "WHERE day=? AND chunk_index=0").run("2026-10-20");
+    await assert.rejects(() => f.store.snapshot("2026-10-20"), /checksum/);
+  } finally { f.close(); }
+});
+
+test("D1 rate limits are atomic, bounded and expiring", async () => {
+  const instant = new Date("2026-10-22T00:00:00Z");
+  const f = await makeFixture(instant);
+  try {
+    const results = await Promise.all(Array.from({ length: 9 }, () =>
+      f.store.allowRate("auth-global", "single-test-client", 3, 300_000)));
+    assert.equal(results.filter(Boolean).length, 3);
+    assert.equal(results.filter((allowed) => !allowed).length, 6);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM rate_limits").get().n, 1);
+    instant.setTime(instant.getTime() + 301_000);
+    await f.store.pruneExpirations();
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM rate_limits").get().n, 0);
+    assert.equal(await f.store.allowRate("auth-global", "single-test-client", 3, 300_000), true);
   } finally { f.close(); }
 });

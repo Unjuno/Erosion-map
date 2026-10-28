@@ -55,7 +55,13 @@ function configuration(env) {
       (floor === 1 && mode !== "max")) {
     throw new Error("invalid trusted erosion rule settings");
   }
+  const rateSecret = env.RATE_LIMIT_SECRET ?? null;
+  if (rateSecret !== null &&
+      (typeof rateSecret !== "string" || rateSecret.length < 32)) {
+    throw new Error("RATE_LIMIT_SECRET must be at least 32 characters if provided");
+  }
   return { origin: u.origin, rpID, secure: !local || u.protocol === "https:",
+    rateSecret,
     rulesDefault: { sameGlyphMode: mode, minimumOutgoingInfluence: floor } };
 }
 function json(status, payload, cookies = []) {
@@ -182,6 +188,23 @@ export async function handleRequest(request, env, context = {}) {
     return setCookie(sessionName, generated, conf.secure, 7 * 24 * 3600);
   };
   const invalidateChallenge = () => setCookie(challengeName, "", conf.secure, 0);
+  const limitAuthStart = async () => {
+    // Always enforce a site-wide cap; it cannot be bypassed by spoofing an
+    // address header. A trusted edge-provided client IP plus a private salt
+    // optionally permits a stricter per-client cap without retaining raw IPs.
+    if (!(await store.allowRate("auth-global", "all", 240, 300_000))) {
+      throw new RequestError(429, "too many authentication requests");
+    }
+    const rawAddress = request.headers.get("CF-Connecting-IP");
+    const sourced = conf.rateSecret !== null && rawAddress !== null &&
+      rawAddress.length > 0 && rawAddress.length <= 128;
+    const sourceKey = sourced
+      ? await hashText(conf.rateSecret + ":" + rawAddress) : "unknown";
+    if (!(await store.allowRate("auth-source", sourceKey,
+      sourced ? 20 : 120, 300_000))) {
+      throw new RequestError(429, "too many authentication requests");
+    }
+  };
   const verifyAssertion = async (payload, pending, expectedUserId = null) => {
     const credential = await store.credentialById(payload?.credential?.id);
     if (!credential) throw new RequestError(400, "unknown passkey");
@@ -273,6 +296,7 @@ export async function handleRequest(request, env, context = {}) {
         : json(200, { authenticated: false, day });
     }
     if (path === "/api/auth/register/start" && method === "POST") {
+      await limitAuthStart();
       await bodyJSON(request);
       const active = await userSession();
       const userId = active ?? crypto.randomUUID();
@@ -319,6 +343,7 @@ export async function handleRequest(request, env, context = {}) {
       ]);
     }
     if (path === "/api/auth/login/start" && method === "POST") {
+      await limitAuthStart();
       await bodyJSON(request);
       const options = await generateAuthenticationOptions({
         rpID: conf.rpID, userVerification: "required", allowCredentials: [],
@@ -341,6 +366,7 @@ export async function handleRequest(request, env, context = {}) {
     }
     if (path === "/api/account/delete/start" && method === "POST") {
       const userId = await requireUser();
+      await limitAuthStart();
       await bodyJSON(request);
       const options = await generateAuthenticationOptions({
         rpID: conf.rpID, userVerification: "required",
@@ -377,6 +403,9 @@ export async function handleRequest(request, env, context = {}) {
     }
     if (path === "/api/post" && method === "POST") {
       const userId = await requireUser();
+      if (!(await store.allowRate("post-user", userId, 30, 60_000))) {
+        throw new RequestError(429, "too many post updates");
+      }
       const body = await bodyJSON(request);
       const day = dayAtInstant(store.clock());
       const saved = await store.submit(userId, day, body.x, body.y, body.char);
