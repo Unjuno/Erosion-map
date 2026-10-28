@@ -138,6 +138,111 @@ function validateSnapshot(snapshot: Snapshot): Map<string, Cell> {
   return output;
 }
 
+
+/**
+ * Memory-bounded implementation of the exact existing max-grouping rules.
+ *
+ * For reasonable rectangular map sizes, numeric column-major arrays replace
+ * O(cells) string keys, receiver objects, adjacency arrays and a large sort.
+ * Receivers are still independent: only the previous generation is read.
+ * x/y iteration is valid because receiver order cannot influence outcomes.
+ *
+ * The historic sum model and extremely large sparse bounds continue through
+ * the reference implementation below, without changing their semantics.
+ */
+function advanceBoundedDense(previous: Snapshot, nextDate: string, floor: 0 | 1): Snapshot {
+  const b = previous.bounds;
+  const height = b.maxY - b.minY + 1;
+  const width = b.maxX - b.minX + 1;
+  const length = height * width;
+  const owners = new Uint32Array(length);
+  const strengths = new Float64Array(length);
+  const ids = new Map<string, number>();
+  const glyphs: string[] = [""];
+  for (const cell of previous.cells) {
+    assertInteger(cell.x, "cell.x");
+    assertInteger(cell.y, "cell.y");
+    assertPositive(cell.n, "cell.n");
+    if (!inside(b, cell.x, cell.y)) throw new RangeError("cell outside bounds");
+    const char = normalizeGlyph(cell.char);
+    let owner = ids.get(char);
+    if (owner === undefined) {
+      owner = glyphs.length;
+      glyphs.push(char);
+      ids.set(char, owner);
+    }
+    const index = (cell.x - b.minX) * height + (cell.y - b.minY);
+    if (owners[index] !== 0) throw new RangeError("duplicate cell at " + key(cell.x, cell.y));
+    owners[index] = owner;
+    strengths[index] = cell.n;
+  }
+
+  const output: Cell[] = [];
+  const candidateOwners = new Uint32Array(5);
+  const candidateStrengths = new Float64Array(5);
+  let count = 0;
+  // Every receiver has at most five claims (resident and four neighbours).
+  // Use the same max-by-glyph grouping and strongest-minus-rivals semantics
+  // as resolveCollision, but without per-cell allocations.
+  const addClaim = (index: number, resident: boolean): void => {
+    if (index < 0) return;
+    const owner = owners[index];
+    if (owner === 0) return;
+    const strength = resident ? strengths[index] : Math.max(strengths[index] - 1, floor);
+    if (strength <= 0) return;
+    for (let k = 0; k < count; k++) {
+      if (candidateOwners[k] === owner) {
+        candidateStrengths[k] = Math.max(candidateStrengths[k]!, strength);
+        return;
+      }
+    }
+    candidateOwners[count] = owner;
+    candidateStrengths[count] = strength;
+    count++;
+  };
+
+  for (let ix = 0; ix < width; ix++) {
+    const x = b.minX + ix;
+    for (let iy = 0; iy < height; iy++) {
+      const y = b.minY + iy;
+      const index = ix * height + iy;
+      const resident = owners[index]!;
+      const north = iy > 0 ? index - 1 : -1;
+      const south = iy + 1 < height ? index + 1 : -1;
+      const east = ix + 1 < width ? index + height : -1;
+      const west = ix > 0 ? index - height : -1;
+      // "Fully surrounded" means all four orthogonal neighbours exist and
+      // share the resident's glyph, even if their outgoing claim is zero.
+      if (resident !== 0 && north !== -1 && south !== -1 &&
+          east !== -1 && west !== -1 &&
+          owners[north] === resident && owners[south] === resident &&
+          owners[east] === resident && owners[west] === resident) {
+        output.push({ x, y, char: glyphs[resident]!, n: strengths[index]! });
+        continue;
+      }
+      count = 0;
+      addClaim(index, true);
+      addClaim(north, false);
+      addClaim(east, false);
+      addClaim(south, false);
+      addClaim(west, false);
+      if (count === 0) continue;
+      let winnerIndex = 0;
+      for (let k = 1; k < count; k++) {
+        if (candidateStrengths[k]! > candidateStrengths[winnerIndex]!) winnerIndex = k;
+      }
+      let remainder = candidateStrengths[winnerIndex]!;
+      for (let k = 0; k < count && remainder > 0; k++) {
+        if (k !== winnerIndex) remainder -= candidateStrengths[k]!;
+      }
+      if (remainder > 0) {
+        output.push({ x, y, char: glyphs[candidateOwners[winnerIndex]!]!, n: remainder });
+      }
+    }
+  }
+  return { date: nextDate, bounds: { ...b }, cells: output };
+}
+
 /**
  * One synchronous day-tick: read only the previous state, so changing
  * receiver iteration order cannot modify the result.
@@ -154,6 +259,18 @@ export function advanceOneDay(
   if (nextDate <= previous.date)
     throw new RangeError("nextDate must be later than the snapshot date");
   const minimumOutgoing = rules.minimumOutgoingInfluence ?? 0;
+  const b = previous.bounds;
+  for (const [label, value] of Object.entries(b)) assertInteger(value, "bounds." + label);
+  if (b.minX > b.maxX || b.minY > b.maxY) throw new RangeError("bounds must be nonempty");
+  const height = b.maxY - b.minY + 1;
+  const width = b.maxX - b.minX + 1;
+  // The max model is non-amplifying. Dense typed arrays use ~12 bytes/cell
+  // independent of the number of active receivers. Guard giant sparse maps.
+  if ((rules.sameGlyphMode ?? "sum") === "max" &&
+      Number.isSafeInteger(width) && Number.isSafeInteger(height) &&
+      width > 0 && height > 0 && width <= Math.floor(1_000_000 / height)) {
+    return advanceBoundedDense(previous, nextDate, minimumOutgoing);
+  }
   const current = validateSnapshot(previous);
   const receivers = new Map<string, Point>();
   const addReceiver = (x: number, y: number): void => {
