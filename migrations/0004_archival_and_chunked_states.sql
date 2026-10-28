@@ -44,3 +44,9 @@ CREATE TABLE IF NOT EXISTS snapshot_chunks (
   chunk_data TEXT NOT NULL,
   PRIMARY KEY(day,chunk_index)
 );
+
+-- Old deployments kept already-published, identifying post records.
+-- Those rows no longer contribute to future calculations or historical
+-- recovery; only the immutable public snapshots remain.
+DELETE FROM posts WHERE day IN (SELECT day FROM snapshots);
+DELETE FROM closed_posts WHERE day IN (SELECT day FROM snapshots);
