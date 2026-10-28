@@ -193,7 +193,7 @@ function advanceBoundedDense(previous: Snapshot, nextDate: string, floor: 0 | 1)
     if (index < 0) return;
     const owner = owners[index]!;
     if (owner === 0) return;
-    const strength = resident ? strengths[index] : Math.max(strengths[index] - 1, floor);
+    const strength = resident ? strengths[index]! : Math.max(strengths[index]! - 1, floor);
     if (strength <= 0) return;
     for (let k = 0; k < count; k++) {
       if (candidateOwners[k] === owner) {
