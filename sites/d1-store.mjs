@@ -16,6 +16,81 @@ const INLINE_SNAPSHOT_LIMIT = 1_500_000;
 const SNAPSHOT_CHUNK_UNITS = 320_000;
 const CHUNKED_SNAPSHOT_MARKER = "@chunked-snapshot:v1";
 
+const RLE_SNAPSHOT_MARKER = "@rle-snapshot:v1:";
+const MAX_RLE_RUNS = 4096;
+const MAX_RLE_DECODED_CELLS = 1_000_000;
+
+/**
+ * Lossless storage compression only: a run is (x, first-y, count, glyph, n).
+ * Receivers produce cells sorted by x, then y. Runs never cross columns.
+ * If a state has too many transitions, use existing full-JSON chunking.
+ * The authoritative SHA remains the SHA-256 of the ORIGINAL public JSON.
+ */
+function encodeSnapshotStorage(snapshot, serialized) {
+  if (serialized.length < 300_000) return serialized;
+  const runs = [];
+  let lastCell = null;
+  let run = null;
+  for (const cell of snapshot.cells) {
+    if (lastCell && (cell.x < lastCell.x ||
+        (cell.x === lastCell.x && cell.y <= lastCell.y))) {
+      return serialized; // Input has no stable canonical order.
+    }
+    if (run && run[0] === cell.x && run[1] + run[2] === cell.y &&
+        run[3] === cell.char && run[4] === cell.n) {
+      run[2]++;
+    } else {
+      if (runs.length >= MAX_RLE_RUNS) return serialized;
+      run = [cell.x, cell.y, 1, cell.char, cell.n];
+      runs.push(run);
+    }
+    lastCell = cell;
+  }
+  const compact = RLE_SNAPSHOT_MARKER + JSON.stringify({
+    date: snapshot.date, bounds: snapshot.bounds, runs,
+  });
+  // Require substantial savings; otherwise no reason to change storage.
+  return compact.length * 2 < serialized.length ? compact : serialized;
+}
+
+function decodeSnapshotStorage(encoded) {
+  if (!encoded.startsWith(RLE_SNAPSHOT_MARKER)) return encoded;
+  const packed = JSON.parse(encoded.slice(RLE_SNAPSHOT_MARKER.length));
+  if (!packed || !Array.isArray(packed.runs) ||
+      packed.runs.length > MAX_RLE_RUNS || !packed.bounds) {
+    throw new Error("published snapshot RLE header invalid");
+  }
+  const cells = [];
+  const b = packed.bounds;
+  let lastX = null;
+  let lastY = null;
+  for (const run of packed.runs) {
+    if (!Array.isArray(run) || run.length !== 5) {
+      throw new Error("published snapshot RLE run invalid");
+    }
+    const [x, y, length, char, n] = run;
+    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) ||
+        !Number.isSafeInteger(length) || length <= 0 ||
+        !Number.isSafeInteger(n) || n < 1 ||
+        typeof char !== "string" || char.length > 32 ||
+        !Number.isSafeInteger(b.minX) || !Number.isSafeInteger(b.maxX) ||
+        !Number.isSafeInteger(b.minY) || !Number.isSafeInteger(b.maxY) ||
+        x < b.minX || x > b.maxX || y < b.minY ||
+        y + length - 1 > b.maxY || y + length - 1 < y ||
+        (lastX !== null && (x < lastX || (x === lastX && y <= lastY))) ||
+        cells.length + length > MAX_RLE_DECODED_CELLS) {
+      throw new Error("published snapshot RLE bounds invalid");
+    }
+    for (let offset = 0; offset < length; offset++) {
+      cells.push({ x, y: y + offset, char, n });
+    }
+    lastX = x;
+    lastY = y + length - 1;
+  }
+  return JSON.stringify({ date: packed.date, bounds: b, cells });
+}
+
+
 function snapshotParts(serialized) {
   if (encoder.encode(serialized).byteLength <= INLINE_SNAPSHOT_LIMIT) return [];
   const chunks = [];
@@ -260,6 +335,8 @@ export class D1Store {
         return chunk.chunkData;
       }).join("");
     }
+    // Reconstitute canonical JSON before checking the public-state digest.
+    serialized = decodeSnapshotStorage(serialized);
     const hash = await hashText(serialized);
     if (hash !== row.sha256) throw new Error("published snapshot checksum mismatch");
     const state = JSON.parse(serialized);
@@ -443,8 +520,11 @@ export class D1Store {
     });
     const serialized = JSON.stringify(next);
     const digest = await hashText(serialized);
-    const chunks = snapshotParts(serialized);
-    const stateValue = chunks.length > 0 ? CHUNKED_SNAPSHOT_MARKER : serialized;
+    // RLE covers large contiguous glyph regions without changing API JSON.
+    // Existing raw JSON/chunks remain readable for previous releases.
+    const storage = encodeSnapshotStorage(next, serialized);
+    const chunks = snapshotParts(storage);
+    const stateValue = chunks.length > 0 ? CHUNKED_SNAPSHOT_MARKER : storage;
     // Each INSERT can carry two chunks via a SELECT/UNION. This reduces
     // per-invocation D1 query count while preserving per-value row limits.
     const chunkWrites = [];
