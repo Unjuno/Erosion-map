@@ -13,10 +13,14 @@ function fixture() {
   sqlite.exec("PRAGMA foreign_keys=ON");
   const adapt = (values) => values.map((v) =>
     v instanceof ArrayBuffer ? new Uint8Array(v) : v);
+  // D1's native worker API returns BLOBs as number[], not Uint8Array.
+  // Use the real contract even though the Node SQLite test DB returns bytes.
+  const nativeD1Row = (row) => row?.publicKey instanceof Uint8Array
+    ? { ...row, publicKey: Array.from(row.publicKey) } : row;
   const wrap = (sql, args = []) => ({
     bind(...params) { return wrap(sql, params); },
-    async first() { return sqlite.prepare(sql).get(...adapt(args)) ?? null; },
-    async all() { return { results: sqlite.prepare(sql).all(...adapt(args)) }; },
+    async first() { return nativeD1Row(sqlite.prepare(sql).get(...adapt(args)) ?? null); },
+    async all() { return { results: sqlite.prepare(sql).all(...adapt(args)).map(nativeD1Row) }; },
     async run() {
       const result = sqlite.prepare(sql).run(...adapt(args));
       return { success: true, meta: { changes: Number(result.changes) } };
