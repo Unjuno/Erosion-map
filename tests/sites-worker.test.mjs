@@ -337,3 +337,27 @@ test("Sites enforces per-account updates without losing the previous final post"
     assert.equal(existing.char, "星");
   } finally { f.close(); }
 });
+
+
+test("scheduled Sites catch-up bounds daily D1 work and validates overrides", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const { D1Store } = await import("../sites/d1-store.mjs");
+    const worker = (await import("../sites/worker.mjs")).default;
+    const store = new D1Store(f.env.DB, {
+      rulesDefault: { sameGlyphMode: "max", minimumOutgoingInfluence: 1 },
+    });
+    await store.initialize(new Date("2026-10-20T12:00:00Z"));
+    f.env.MAX_CATCHUP_DAYS = "2";
+    let pending;
+    await worker.scheduled({}, f.env, { waitUntil: promise => { pending = promise; } });
+    await pending;
+    const days = f.sqlite.prepare("SELECT day FROM snapshots ORDER BY day").all();
+    assert.deepEqual(days.map(x => x.day),
+      ["2026-10-19", "2026-10-20", "2026-10-21"]);
+    assert.equal((await f.fetcher("/api/status")).status, 200);
+    assert.equal((await handleRequest(new Request(origin + "/api/status"),
+      { ...f.env, MAX_CATCHUP_DAYS: "99" }, f.context)).status, 503);
+  } finally { f.close(); }
+});
