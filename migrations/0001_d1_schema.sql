@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS challenges (
   token_hash TEXT PRIMARY KEY NOT NULL,
   kind TEXT NOT NULL CHECK(kind IN ('register','authenticate')),
   challenge TEXT NOT NULL,
-  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  -- Registration challenges refer to a not-yet-created user id.
+  -- Therefore they intentionally cannot carry a users(id) foreign key.
+  user_id TEXT,
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_challenges_exp ON challenges(expires_at);
