@@ -91,7 +91,7 @@ async function setup() {
     const archive = await loadPublishedArchive({ limit: 30 });
     states = archive.states;
     source = archive.source === "api"
-      ? "DBで確定した公開スナップショット" : "静的公開スナップショット";
+      ? "DBの日次確定スナップショット" : "保存された静的スナップショット";
   } catch {
     states = fakeHistory();
   }
