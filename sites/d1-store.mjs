@@ -311,6 +311,23 @@ export class D1Store {
       day
     );
   }
+  /**
+   * Anonymous immutable submissions copied by the closure INSERT trigger.
+   * Never read live posts after the day is sealed: an account can be deleted
+   * before publication and its post row cascades away.
+   */
+  async sealedPosts(day) {
+    assertIsoDay(day);
+    const rows = await this.all(
+      "SELECT post_order AS postOrder,revision,x,y,char " +
+      "FROM closed_posts WHERE day=? ORDER BY post_order", day
+    );
+    return rows.map((row) => ({
+      userId: "sealed-" + row.postOrder, date: day,
+      revision: Number(row.revision), x: Number(row.x),
+      y: Number(row.y), char: row.char,
+    }));
+  }
   async publishDay(day, instant = this.clock()) {
     assertIsoDay(day);
     const today = dayAtInstant(instant);
@@ -341,7 +358,7 @@ export class D1Store {
       throw new Error("day closure refers to a different prior snapshot");
     }
     const config = JSON.parse(closure.rulesJson);
-    const next = buildDailySnapshot(previous, await this.dailyPosts(day), {
+    const next = buildDailySnapshot(previous, await this.sealedPosts(day), {
       date: day, ...config, registeredUserCount: Number(closure.userCount),
     });
     const serialized = JSON.stringify(next);
@@ -360,6 +377,9 @@ export class D1Store {
         "INSERT OR IGNORE INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
         day, serialized, digest, this.now()
       ),
+      // Publication and cleanup commit atomically: frozen submissions no
+      // longer need retention after the immutable snapshot is stored.
+      this.p("DELETE FROM closed_posts WHERE day=?", day),
     ]);
     const stored = await this.snapshot(day);
     if (!stored) throw new Error("snapshot write was not committed");
