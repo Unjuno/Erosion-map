@@ -169,18 +169,40 @@ export class Store {
     this.db.prepare("DELETE FROM sessions WHERE expires_at<=?").run(time);
     this.db.prepare("DELETE FROM challenges WHERE expires_at<=?").run(time);
   }
+  readVerifiedSnapshot(row, expectedDay = null) {
+    if (sha(row.state_json) !== row.sha256) {
+      throw new Error("snapshot integrity check failed");
+    }
+    const state = JSON.parse(row.state_json);
+    if (!state || typeof state !== "object" ||
+        !Array.isArray(state.cells) || !state.bounds) {
+      throw new Error("snapshot data has an invalid structure");
+    }
+    assertIsoDay(state.date);
+    if (expectedDay !== null && state.date !== expectedDay) {
+      throw new Error("snapshot day and database key disagree");
+    }
+    return state;
+  }
   latestState() {
     const row = this.db.prepare(
-      "SELECT state_json FROM snapshots ORDER BY day DESC LIMIT 1"
+      "SELECT day,state_json,sha256 FROM snapshots ORDER BY day DESC LIMIT 1"
     ).get();
-    return row ? JSON.parse(row.state_json) : null;
+    return row ? this.readVerifiedSnapshot(row, row.day) : null;
   }
   snapshot(day) {
     assertIsoDay(day);
     const row = this.db.prepare(
       "SELECT state_json,sha256 FROM snapshots WHERE day=?"
     ).get(day);
-    return row ? { state: JSON.parse(row.state_json), sha256: row.sha256 } : null;
+    return row ? { state: this.readVerifiedSnapshot(row, day), sha256: row.sha256 } : null;
+  }
+  /** SQLite online-consistent backup. Target path must not already exist. */
+  backupTo(destination) {
+    if (typeof destination !== "string" || destination.trim() === "") {
+      throw new RangeError("backup destination must be a non-empty path");
+    }
+    this.db.prepare("VACUUM INTO ?").run(destination);
   }
   days(limit = 90) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 3650) {

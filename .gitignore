@@ -11,3 +11,5 @@ site/
 *.log
 .DS_Store
 coverage/
+
+backups/
