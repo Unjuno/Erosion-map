@@ -74,6 +74,7 @@ function fixture() {
       sqlite.exec(await readFile("migrations/0002_day_closure.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0003_closed_post_capture.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0004_archival_and_chunked_states.sql", "utf8"));
+  sqlite.exec(await readFile("migrations/0005_durable_rate_limits.sql", "utf8"));
     },
     close() { sqlite.close(); },
   };
@@ -286,5 +287,53 @@ test("Sites maintenance removes expired sessions and challenges on status reques
     assert.equal(response.status, 200);
     assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS total FROM sessions").get().total, 0);
     assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS total FROM challenges").get().total, 0);
+  } finally { f.close(); }
+});
+
+test("Sites auth-start has durable global and optionally hashed client rate limits", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    f.env.RATE_LIMIT_SECRET = "a-private-test-pepper-longer-than-32-characters";
+    const common = { headers: { "CF-Connecting-IP": "198.51.100.21" } };
+    for (let i = 0; i < 20; i++) {
+      const response = await f.post("/api/auth/login/start", {}, common);
+      assert.equal(response.status, 200);
+    }
+    const blocked = await f.post("/api/auth/login/start", {}, common);
+    assert.equal(blocked.status, 429);
+    const other = await f.post("/api/auth/login/start", {},
+      { headers: { "CF-Connecting-IP": "198.51.100.22" } });
+    assert.equal(other.status, 200);
+    const stored = f.sqlite.prepare("SELECT bucket_hash,attempts FROM rate_limits").all();
+    assert.ok(stored.length >= 3);
+    assert.ok(stored.every((row) => /^[a-f0-9]{64}$/.test(row.bucket_hash)));
+    assert.ok(!JSON.stringify(stored).includes("198.51.100."));
+  } finally { f.close(); }
+});
+
+test("Sites enforces per-account updates without losing the previous final post", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const user = "rate-player";
+    const session = "a-unique-local-test-session-token";
+    const hash = await hashText(session);
+    f.sqlite.prepare("INSERT INTO users(id,created_at) VALUES(?,?)")
+      .run(user, 1);
+    f.sqlite.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)")
+      .run(hash, user, clock().getTime() + 600_000);
+    const auth = { headers: { Cookie: "__Host-erosion-session=" + session } };
+    for (let i = 1; i <= 30; i++) {
+      assert.equal((await f.post("/api/post", { char: "星", x: i, y: 0 }, auth)).status, 200);
+    }
+    const blocked = await f.post("/api/post", { char: "海", x: 99, y: 0 }, auth);
+    assert.equal(blocked.status, 429);
+    const existing = f.sqlite.prepare(
+      "SELECT revision,x,char FROM posts WHERE user_id=?"
+    ).get(user);
+    assert.equal(existing.revision, 30);
+    assert.equal(existing.x, 30);
+    assert.equal(existing.char, "星");
   } finally { f.close(); }
 });
