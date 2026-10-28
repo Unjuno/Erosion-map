@@ -17,6 +17,8 @@ const SNAPSHOT_CHUNK_UNITS = 320_000;
 const CHUNKED_SNAPSHOT_MARKER = "@chunked-snapshot:v1";
 
 const RLE_SNAPSHOT_MARKER = "@rle-snapshot:v1:";
+// Carries an already verified DB SHA without exposing it in public JSON.
+const VERIFIED_SNAPSHOT_SHA = Symbol("verified-snapshot-sha");
 const MAX_RLE_RUNS = 4096;
 const MAX_RLE_DECODED_CELLS = 1_000_000;
 
@@ -344,6 +346,9 @@ export class D1Store {
     if (!state || !Array.isArray(state.cells) || !state.bounds || state.date !== day) {
       throw new Error("published snapshot format mismatch");
     }
+    Object.defineProperty(state, VERIFIED_SNAPSHOT_SHA, {
+      value: row.sha256, enumerable: false,
+    });
     return state;
   }
   async latestState() {
@@ -503,7 +508,8 @@ export class D1Store {
     // sealed so an operator can recover without losing the cutoff.
     const effective = await this.dayRules(day);
     const userCount = await this.usersCount();
-    const previousHash = (await this.snapshot(previous.date))?.sha256;
+    const previousHash = previous[VERIFIED_SNAPSHOT_SHA] ??
+      (await this.snapshot(previous.date))?.sha256;
     if (!previousHash) throw new Error("previous snapshot is unavailable");
     await this.run(
       "INSERT OR IGNORE INTO day_closures(day,rules_json,user_count,previous_hash,closed_at) " +
@@ -563,11 +569,15 @@ export class D1Store {
       this.p("DELETE FROM orphaned_posts WHERE day=?", day),
       this.p("DELETE FROM posts WHERE day=?", day),
     ]);
+    // A successful INSERT and its chunks were committed in one D1 batch.
+    // Returning the in-memory state avoids a second full JSON decode of a
+    // 200k+ cell map. Only a lost concurrent insert needs to re-read storage.
+    if (writes[1]?.meta?.changes === 1) {
+      return { state: next, existed: false };
+    }
     const stored = await this.snapshot(day);
     if (!stored) throw new Error("snapshot write was not committed");
-    // Use INSERT changes rather than checksum equality: concurrent jobs can
-    // compute the same digest but only the first one actually wrote the row.
-    return { state: stored.state, existed: writes[1]?.meta?.changes === 0 };
+    return { state: stored.state, existed: true };
   }
   async publishClosedDays(instant = this.clock(), maxDays = 32) {
     safeInt(maxDays, "maxDays", 1);
