@@ -59,6 +59,15 @@ try {
     id: "benchmark-passkey", publicKey: new Uint8Array([1, 2]), counter: 0,
   }, true);
   await store.submit("benchmark-user", "2026-01-01", 0, 0, "海");
+  const originalPublishDay = store.publishDay.bind(store);
+  store.publishDay = async (...args) => {
+    const result = await originalPublishDay(...args);
+    // Sample after every committed day (not a continuous peak detector).
+    const mem = process.memoryUsage();
+    peakRss = Math.max(peakRss, mem.rss);
+    peakHeap = Math.max(peakHeap, mem.heapUsed);
+    return result;
+  };
   const started = performance.now();
   // Simulate a catch-up job: 365 daily commits, no intervening new posts.
   const published = await store.publishClosedDays(now, 366);
@@ -112,7 +121,7 @@ try {
   };
   console.log(JSON.stringify(result, null, 2));
   if (result.identifiedFinalPosts !== 0 ||
-      result.snapshotTextBytes > 300_000_000) {
+      result.snapshotTextBytes > 50_000_000) {
     throw new Error("published data retention/size exceeded sanity threshold");
   }
 } finally {
