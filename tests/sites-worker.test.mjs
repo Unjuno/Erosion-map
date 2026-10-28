@@ -369,3 +369,24 @@ test("scheduled Sites catch-up bounds daily D1 work and validates overrides", as
       { ...f.env, MAX_CATCHUP_DAYS: "99" }, f.context)).status, 503);
   } finally { f.close(); }
 });
+
+
+test("Sites status and history do not decode the full map when already current", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    await f.fetcher("/api/status"); // Establish the baseline once.
+    const sql = [];
+    const before = f.env.DB.prepare.bind(f.env.DB);
+    f.env.DB.prepare = query => {
+      sql.push(query);
+      return before(query);
+    };
+    assert.equal((await f.fetcher("/api/status")).status, 200);
+    assert.equal((await f.fetcher("/api/history")).status, 200);
+    assert.ok(!sql.some(statement => /SELECT .*state_json/i.test(statement)),
+      "status/history should use only day and checksum metadata");
+    assert.equal((await f.fetcher("/api/state")).status, 200,
+      "full map must still be verified for the actual map request");
+  } finally { f.close(); }
+});
