@@ -14,7 +14,9 @@
     "export:states": "npm run build:site && node scripts/export-states.mjs",
     "backup": "npm run build && node scripts/backup-db.mjs",
     "configure:day": "npm run build && node scripts/configure-day.mjs",
-    "configure:defaults": "npm run build && node scripts/configure-defaults.mjs"
+    "configure:defaults": "npm run build && node scripts/configure-defaults.mjs",
+    "preflight": "node scripts/release-preflight.mjs",
+    "benchmark": "npm run build && node scripts/benchmark-engine.mjs"
   },
   "devDependencies": {
     "typescript": "5.8.3"
