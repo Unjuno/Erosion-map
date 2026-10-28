@@ -67,6 +67,7 @@ function fixture() {
     sqlite, env, context, fetcher, post, staticHits,
     async setup() {
       sqlite.exec(await readFile("migrations/0001_d1_schema.sql", "utf8"));
+      sqlite.exec(await readFile("migrations/0002_day_closure.sql", "utf8"));
     },
     close() { sqlite.close(); },
   };

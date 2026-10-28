@@ -251,6 +251,17 @@ export class D1Store {
         ? Number(row.minimumOutgoingInfluence) : defaults.minimumOutgoingInfluence,
     };
   }
+  /**
+   * A sealed day has immutable submission membership. The D1 migration
+   * additionally enforces this with SQL triggers, closing the read/write race.
+   */
+  async sealedDay(day) {
+    assertIsoDay(day);
+    return this.first(
+      "SELECT day,rules_json AS rulesJson,user_count AS userCount," +
+      "previous_hash AS previousHash FROM day_closures WHERE day=?", day
+    );
+  }
   async submit(userId, day, x, y, char) {
     safeUser(userId);
     assertIsoDay(day);
@@ -267,15 +278,23 @@ export class D1Store {
     if (x < minX || x > maxX || y < minY || y > maxY) {
       throw new RangeError("post lies outside the active map");
     }
-    if (await this.snapshot(day)) throw new Error("day already published");
-    const row = await this.first(
-      "INSERT INTO posts(user_id,day,revision,x,y,char,updated_at) VALUES(?,?,1,?,?,?,?) " +
-      "ON CONFLICT(user_id,day) DO UPDATE SET revision=posts.revision+1, " +
-      "x=excluded.x, y=excluded.y, char=excluded.char, updated_at=excluded.updated_at " +
-      "RETURNING revision",
-      userId, day, x, y, glyph, this.now()
-    );
-    return { revision: Number(row.revision), day, x, y, char: glyph };
+    if (await this.sealedDay(day) || await this.snapshot(day)) {
+      throw new Error("day already published or sealed");
+    }
+    try {
+      const row = await this.first(
+        "INSERT INTO posts(user_id,day,revision,x,y,char,updated_at) VALUES(?,?,1,?,?,?,?) " +
+        "ON CONFLICT(user_id,day) DO UPDATE SET revision=posts.revision+1, " +
+        "x=excluded.x, y=excluded.y, char=excluded.char, updated_at=excluded.updated_at " +
+        "RETURNING revision",
+        userId, day, x, y, glyph, this.now()
+      );
+      return { revision: Number(row.revision), day, x, y, char: glyph };
+    } catch (error) {
+      // A concurrent publisher can seal the day after the initial check.
+      if (await this.sealedDay(day)) throw new Error("day already sealed");
+      throw error;
+    }
   }
   async currentPost(userId, day) {
     safeUser(userId);
@@ -303,9 +322,27 @@ export class D1Store {
     if (nextIsoDay(previous.date) !== day) {
       throw new RangeError("daily snapshots must be published in sequence");
     }
-    const config = await this.dayRules(day);
+    // A single INSERT seals the day before reading final submissions.
+    // BEFORE INSERT/UPDATE triggers on posts reject all later writes.
+    // If the calculation subsequently fails, the day intentionally remains
+    // sealed so an operator can recover without losing the cutoff.
+    const effective = await this.dayRules(day);
+    const userCount = await this.usersCount();
+    const previousHash = (await this.snapshot(previous.date))?.sha256;
+    if (!previousHash) throw new Error("previous snapshot is unavailable");
+    await this.run(
+      "INSERT OR IGNORE INTO day_closures(day,rules_json,user_count,previous_hash,closed_at) " +
+      "VALUES(?,?,?,?,?)",
+      day, JSON.stringify(effective), userCount, previousHash, this.now()
+    );
+    const closure = await this.sealedDay(day);
+    if (!closure) throw new Error("day closure failed");
+    if (closure.previousHash !== previousHash) {
+      throw new Error("day closure refers to a different prior snapshot");
+    }
+    const config = JSON.parse(closure.rulesJson);
     const next = buildDailySnapshot(previous, await this.dailyPosts(day), {
-      date: day, ...config, registeredUserCount: await this.usersCount(),
+      date: day, ...config, registeredUserCount: Number(closure.userCount),
     });
     const serialized = JSON.stringify(next);
     const digest = await hashText(serialized);
