@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "build:site": "npm run build && node scripts/build-site.mjs",
     "dev": "npm run build:site && node scripts/serve.mjs",
-    "test": "npm run build:site && node --check site/app.js && node --check site/account.js && node --check site/ranking.js && node --check site/archive.js && node --test tests/*.test.mjs",
+    "test": "npm run build:sites && node --check site/app.js && node --check site/account.js && node --check site/ranking.js && node --check site/archive.js && node --check site/_worker.js && node --test tests/*.test.mjs",
     "dev:full": "npm run build:site && node scripts/run-server.mjs",
     "job": "npm run build && node scripts/daily-job.mjs",
     "export:states": "npm run build:site && node scripts/export-states.mjs",
@@ -16,10 +16,12 @@
     "configure:day": "npm run build && node scripts/configure-day.mjs",
     "configure:defaults": "npm run build && node scripts/configure-defaults.mjs",
     "preflight": "node scripts/release-preflight.mjs",
-    "benchmark": "npm run build && node scripts/benchmark-engine.mjs"
+    "benchmark": "npm run build && node scripts/benchmark-engine.mjs",
+    "build:sites": "npm run build:site && node scripts/build-sites-worker.mjs"
   },
   "devDependencies": {
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "esbuild": "0.25.12"
   },
   "engines": {
     "node": ">=22"
