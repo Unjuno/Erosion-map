@@ -40,7 +40,7 @@ console.log(JSON.stringify({
     node: process.version, os: platform(), arch: arch(),
     cpuModel: cpu?.model ?? "unknown",
     // OS-reported nominal MHz, not continuously measured clock frequency.
-    osReportedCpuMHz: cpu?.speed ?? null,
+    osReportedCpuMHz: cpu?.speed > 0 ? cpu.speed : null,
     logicalCores: availableParallelism(), batch: repetitions,
     warmup, grid: "500x500", seeds: seed.cells.length,
     generationsPerRun: steps, profile,
