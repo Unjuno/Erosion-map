@@ -16,7 +16,7 @@ import {
 } from "@simplewebauthn/server";
 import { Buffer } from "node:buffer";
 import { D1Store, hashText } from "./d1-store.mjs";
-import { dayAtInstant } from "../dist/calendar.js";
+import { dayAtInstant, nextIsoDay } from "../dist/calendar.js";
 
 class RequestError extends Error {
   constructor(code, message) {
@@ -176,6 +176,23 @@ export async function handleRequest(request, env, context = {}) {
   const cookies = parseCookies(request.headers.get("cookie"));
   const sessionToken = cookies.get(sessionName);
   const challengeToken = cookies.get(challengeName);
+  // Status, history and post entry do not need the entire public map.
+  // Loading hundreds of thousands of cells only to check the latest day
+  // can consume a substantial portion of a Sites isolate's memory budget.
+  const ensureBaseline = async () => {
+    let last = await store.latestDay();
+    if (last === null) {
+      await store.initialize();
+      last = await store.latestDay();
+    }
+    return last;
+  };
+  const publishOneMissedDay = async () => {
+    const latest = await ensureBaseline();
+    if (latest !== null && nextIsoDay(latest) < dayAtInstant(store.clock())) {
+      await store.publishClosedDays(undefined, 1);
+    }
+  };
   const userSession = async () => sessionToken
     ? store.userForSession(await hashText(sessionToken)) : null;
   const requireUser = async () => {
@@ -274,24 +291,22 @@ export async function handleRequest(request, env, context = {}) {
       // Lightweight maintenance for installations where scheduled triggers
       // are not offered. Cleanup is deterministic and idempotent.
       await store.pruneExpirations();
-      await store.initialize();
       // Opportunistic fallback when the Sites runtime has no cron trigger.
-      // Limit to one day per request; scheduled events can catch up faster.
-      await store.publishClosedDays(undefined, 1);
+      // Only decode a state when a closed day actually requires publication.
+      await publishOneMissedDay();
       return json(200, { mode: "sites-d1",
-        latestDay: (await store.latestState())?.date ?? null });
+        latestDay: await store.latestDay() });
     }
     if (path === "/api/state" && method === "GET") {
-      await store.initialize();
-      await store.publishClosedDays(undefined, 1);
+      await publishOneMissedDay();
       const date = url.searchParams.get("date");
-      const day = date ?? (await store.latestState())?.date;
+      const day = date ?? await store.latestDay();
       const entry = day ? await store.snapshot(day) : null;
       if (!entry) throw new RequestError(404, "snapshot unavailable");
       return json(200, { state: entry.state, sha256: entry.sha256 });
     }
     if (path === "/api/history" && method === "GET") {
-      await store.initialize();
+      await ensureBaseline();
       return json(200, { days: await store.days(180) });
     }
     if (path === "/api/me" && method === "GET") {
@@ -417,7 +432,7 @@ export async function handleRequest(request, env, context = {}) {
       const body = await bodyJSON(request);
       // Establish a baseline before accepting the first post, including when
       // clients use the API without visiting the map or status endpoints.
-      await store.initialize();
+      await ensureBaseline();
       const day = dayAtInstant(store.clock());
       const saved = await store.submit(userId, day, body.x, body.y, body.char);
       return json(200, { saved });
