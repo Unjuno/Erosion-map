@@ -243,7 +243,7 @@ export class Store {
     const row = this.db.prepare(
       "SELECT post_strength AS postStrength, same_glyph_mode AS sameGlyphMode, min_outbound AS minimumOutgoingInfluence FROM day_config WHERE day=?"
     ).get(day);
-    return row ?? { postStrength: 1, sameGlyphMode: "sum", minimumOutgoingInfluence: 0 };
+    return row ? { ...row } : { postStrength: 1, sameGlyphMode: "sum", minimumOutgoingInfluence: 0 };
   }
   /** Trusted operator-only setting, never exposed on public routes. */
   setDayRules(day, sameGlyphMode, minimumOutgoingInfluence = 0) {
