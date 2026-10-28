@@ -13,6 +13,10 @@ test("public repository ships only technical migrations and config examples", as
   const migration = await readFile("migrations/0002_day_closure.sql", "utf8");
   assert.match(migration, /BEFORE INSERT ON posts/);
   assert.match(migration, /BEFORE UPDATE ON posts/);
+  const capture = await readFile("migrations/0003_closed_post_capture.sql", "utf8");
+  assert.match(capture, /AFTER INSERT ON day_closures/);
+  assert.match(capture, /ROW_NUMBER\(\) OVER/);
+  assert.doesNotMatch(capture, /CREATE TABLE.*user_id/i);
   const variables = await readFile(".env.example", "utf8");
   assert.match(variables, /^PUBLIC_ORIGIN=/m);
   assert.doesNotMatch(variables, /(?:sk-proj-|AKIA[0-9A-Z]{16})/);
