@@ -2,7 +2,7 @@
  * Cloudflare-style worker entrypoint for ChatGPT Sites D1 + static assets.
  *
  * Deployment requires:
- *   env.DB: D1 binding, migration 0001_d1_schema.sql applied
+ *   env.DB: D1 binding, migrations 0001 through 0005 applied in order
  *   env.ASSETS: static assets binding for site/
  *   env.PUBLIC_ORIGIN: final HTTPS origin, never derived from Host headers
  *   env.RP_ID: same hostname or a legitimate parent domain
