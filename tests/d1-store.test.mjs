@@ -581,6 +581,34 @@ test("missing closure capture must stop publication before any accepted post is 
     ).get().n, 0, "a broken capture cannot be silently published as an empty day");
     assert.equal(f.sqlite.prepare(
       "SELECT COUNT(*) AS n FROM day_closures WHERE day='2026-10-20'"
-    ).get().n, 1, "the sealed day remains sealed for operator repair");
+    ).get().n, 0, "no new closure is created while its capture trigger is missing");
+  } finally { f.close(); }
+});
+
+
+test("a present but broken capture trigger cannot silently discard accepted posts", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("poster", {
+      id: "broken-trigger-key", publicKey: new Uint8Array([7]), counter: 0,
+    }, true);
+    await f.store.submit("poster", "2026-10-20", 0, 0, "月");
+    // A no-op trigger bearing the right name mimics partial migration damage.
+    f.sqlite.exec(
+      "DROP TRIGGER capture_closed_day_posts;" +
+      "CREATE TRIGGER capture_closed_day_posts AFTER INSERT ON day_closures " +
+      "BEGIN SELECT 1; END;"
+    );
+    await assert.rejects(() => f.store.publishDay("2026-10-20"), /capture integrity mismatch/);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM posts WHERE day='2026-10-20'"
+    ).get().n, 1);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshots WHERE day='2026-10-20'"
+    ).get().n, 0);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM day_closures WHERE day='2026-10-20'"
+    ).get().n, 1, "the post remains sealed while operators repair the missing frozen copy");
   } finally { f.close(); }
 });
