@@ -573,8 +573,23 @@ export class D1Store {
     if (frozen.length < Number(incoming.livePosts) + Number(incoming.anonymousPosts)) {
       throw new Error("day closure capture integrity mismatch");
     }
+    // Accepted posts may sit on an expanded grid that was unlocked by
+    // users who subsequently deleted their accounts before this day was
+    // sealed. The current user count can therefore be smaller than the
+    // boundary at acceptance time. Infer the MINIMUM symmetric grid covering
+    // every already-accepted coordinate; never reject such a final post.
+    // The actual user count remains frozen in day_closures.user_count.
+    let requiredGridSize = Number(closure.userCount);
+    for (const post of frozen) {
+      const sizeForX = post.x < 0 ? -2 * post.x : 2 * post.x + 1;
+      const sizeForY = post.y < 0 ? -2 * post.y : 2 * post.y + 1;
+      requiredGridSize = Math.max(requiredGridSize, sizeForX, sizeForY);
+    }
+    if (!Number.isSafeInteger(requiredGridSize)) {
+      throw new RangeError("accepted post requires an invalid grid size");
+    }
     const next = buildDailySnapshot(previous, frozen, {
-      date: day, ...config, registeredUserCount: Number(closure.userCount),
+      date: day, ...config, registeredUserCount: requiredGridSize,
     });
     const serialized = JSON.stringify(next);
     const digest = await hashText(serialized);
