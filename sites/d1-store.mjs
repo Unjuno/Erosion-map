@@ -534,7 +534,7 @@ export class D1Store {
     // actually exists. Without it, cleanup could permanently erase a
     // submitted glyph without adding it to the published snapshot.
     const captureTrigger = await this.first(
-      "SELECT 1 AS present FROM sqlite_master " +
+      "SELECT 1 AS present FROM sqlite_schema " +
       "WHERE type='trigger' AND name='capture_closed_day_posts'"
     );
     if (!captureTrigger) {
