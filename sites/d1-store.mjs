@@ -530,6 +530,16 @@ export class D1Store {
     if (nextIsoDay(previous.date) !== day) {
       throw new RangeError("daily snapshots must be published in sequence");
     }
+    // Never finalize a day unless the required anonymous capture trigger
+    // actually exists. Without it, cleanup could permanently erase a
+    // submitted glyph without adding it to the published snapshot.
+    const captureTrigger = await this.first(
+      "SELECT 1 AS present FROM sqlite_master " +
+      "WHERE type='trigger' AND name='capture_closed_day_posts'"
+    );
+    if (!captureTrigger) {
+      throw new Error("day closure capture integrity guard is missing");
+    }
     // A single INSERT seals the day before reading final submissions.
     // BEFORE INSERT/UPDATE triggers on posts reject all later writes.
     // If the calculation subsequently fails, the day intentionally remains
@@ -550,7 +560,20 @@ export class D1Store {
       throw new Error("day closure refers to a different prior snapshot");
     }
     const config = JSON.parse(closure.rulesJson);
-    const next = buildDailySnapshot(previous, await this.sealedPosts(day), {
+    const frozen = await this.sealedPosts(day);
+    // A corrupt or partial closure must not silently publish an empty map
+    // and delete still-accepted posts. Frozen copies survive later account
+    // deletion, so their count may be HIGHER than the surviving linked rows.
+    const incoming = await this.first(
+      "SELECT " +
+      "(SELECT COUNT(*) FROM posts WHERE day=?) AS livePosts," +
+      "(SELECT COUNT(*) FROM orphaned_posts WHERE day=?) AS anonymousPosts",
+      day, day
+    );
+    if (frozen.length < Number(incoming.livePosts) + Number(incoming.anonymousPosts)) {
+      throw new Error("day closure capture integrity mismatch");
+    }
+    const next = buildDailySnapshot(previous, frozen, {
       date: day, ...config, registeredUserCount: Number(closure.userCount),
     });
     const serialized = JSON.stringify(next);
@@ -598,8 +621,9 @@ export class D1Store {
         "INSERT INTO site_settings(key,value) " +
         "SELECT 'published_bounds',? WHERE EXISTS (" +
         "SELECT 1 FROM snapshots WHERE day=? AND sha256=?) " +
+        "AND NOT EXISTS (SELECT 1 FROM snapshots WHERE day>?) " +
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        JSON.stringify(next.bounds), day, digest
+        JSON.stringify(next.bounds), day, digest, day
       ),
       // Snapshot, chunks, and removal of source identifying posts are one
       // atomic transaction: never erase information needed for a retry.
