@@ -513,3 +513,74 @@ test("cached published bounds remain monotonic after user count shrinks", async 
       "expanded-player", "2026-10-22", 301, 0, "木"), /outside/);
   } finally { f.close(); }
 });
+
+
+test("a late competing publisher cannot rewind bounds after a newer day expands", async () => {
+  const f = await makeFixture(new Date("2026-10-23T00:00:00.000Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    const originalBatch = f.db.batch.bind(f.db);
+    let releaseStale;
+    let markPaused;
+    const suspended = new Promise(resolve => { releaseStale = resolve; });
+    const paused = new Promise(resolve => { markPaused = resolve; });
+    let intercepted = false;
+    f.db.batch = async (statements) => {
+      if (!intercepted && statements.some(item =>
+        item.sql.includes("INSERT INTO day_config") &&
+        item.parameters?.[0] === "2026-10-20")) {
+        intercepted = true;
+        markPaused();
+        await suspended;
+      }
+      return originalBatch(statements);
+    };
+
+    const stale = f.store.publishDay("2026-10-20");
+    await paused;
+    const competing = new D1Store(f.db, {
+      clock: () => new Date("2026-10-23T00:00:00Z"),
+      rulesDefault: { sameGlyphMode: "max", minimumOutgoingInfluence: 1 },
+    });
+    await competing.publishDay("2026-10-20");
+    // User growth on day two expands 500x500 to 502x502.
+    f.sqlite.exec(
+      "WITH RECURSIVE user_num(n) AS (" +
+      "SELECT 1 UNION ALL SELECT n+1 FROM user_num WHERE n<502) " +
+      "INSERT INTO users(id,created_at) " +
+      "SELECT 'registration-' || n,1 FROM user_num"
+    );
+    await competing.publishDay("2026-10-21");
+    const before = await competing.publishedBounds();
+    assert.equal(before.maxX, 250);
+    releaseStale();
+    const lateResult = await stale;
+    assert.equal(lateResult.existed, true);
+    assert.deepEqual(await competing.publishedBounds(), before,
+      "stale publication must never overwrite newer published bounds");
+  } finally { f.close(); }
+});
+
+test("missing closure capture must stop publication before any accepted post is erased", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("poster", {
+      id: "closure-guard-key", publicKey: new Uint8Array([7]), counter: 0,
+    }, true);
+    await f.store.submit("poster", "2026-10-20", 0, 0, "星");
+    // Deliberate fault injection: simulate a damaged D1 trigger installation.
+    f.sqlite.exec("DROP TRIGGER capture_closed_day_posts");
+    await assert.rejects(() => f.store.publishDay("2026-10-20"),
+      /capture|frozen|integrity|inconsisten/i);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM posts WHERE day='2026-10-20'"
+    ).get().n, 1, "the accepted post must remain available for recovery");
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshots WHERE day='2026-10-20'"
+    ).get().n, 0, "a broken capture cannot be silently published as an empty day");
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM day_closures WHERE day='2026-10-20'"
+    ).get().n, 1, "the sealed day remains sealed for operator repair");
+  } finally { f.close(); }
+});
