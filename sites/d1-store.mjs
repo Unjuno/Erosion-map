@@ -1,7 +1,7 @@
 /**
  * Asynchronous D1 persistence adapter for ChatGPT Sites-compatible workers.
  *
- * Requires D1 migrations 0001, 0002, 0003, and 0004 in order.
+ * Requires D1 migrations 0001 through 0005 in order.
  * Public routes must authenticate sessions themselves; do not expose
  * createUser, submit, or publishing methods to anonymous calls.
  */
