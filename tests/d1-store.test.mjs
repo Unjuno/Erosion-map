@@ -612,3 +612,38 @@ test("a present but broken capture trigger cannot silently discard accepted post
     ).get().n, 1, "the post remains sealed while operators repair the missing frozen copy");
   } finally { f.close(); }
 });
+
+
+test("an accepted expanded-grid post survives account deletion and later user-count shrink", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("expanded-author", {
+      id: "expanded-author-key", publicKey: new Uint8Array([1, 2]), counter: 0,
+    }, true);
+    // 502 registered users temporarily unlock a grid larger than 500x500.
+    f.sqlite.exec(
+      "WITH RECURSIVE n(x) AS (" +
+      "SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<501) " +
+      "INSERT INTO users(id,created_at) SELECT 'expanded-other-' || x,1 FROM n"
+    );
+    const accepted = await f.store.submit("expanded-author",
+      "2026-10-20", 250, 250, "森");
+    assert.deepEqual([accepted.x, accepted.y], [250, 250]);
+    // Delete the author after midnight, before the daily closure job.
+    await f.store.deleteUser("expanded-author");
+    f.sqlite.exec("DELETE FROM users WHERE id LIKE 'expanded-other-%'");
+    assert.equal(await f.store.usersCount(), 0);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM orphaned_posts WHERE day='2026-10-20'"
+    ).get().n, 1);
+    const output = await f.store.publishDay("2026-10-20");
+    assert.ok(output.state.bounds.maxX >= 250 && output.state.bounds.maxY >= 250,
+      "previously accepted coordinates must remain inside the published grid");
+    assert.ok(output.state.cells.some(cell =>
+      cell.x === 250 && cell.y === 250 && cell.char === "森"));
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM orphaned_posts WHERE day='2026-10-20'"
+    ).get().n, 0);
+  } finally { f.close(); }
+});
