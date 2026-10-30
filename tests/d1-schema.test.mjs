@@ -71,3 +71,49 @@ test("closure capture migration backfills old sealed posts and freezes new ones"
       [["2026-10-20", 1, "海"], ["2026-10-21", 1, "山"]]);
   } finally { db.close(); }
 });
+
+
+test("migration 0006 backfills sealed counts and counts new closures atomically", async () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec("PRAGMA foreign_keys=ON");
+    for (const filename of [
+      "0001_d1_schema.sql",
+      "0002_day_closure.sql",
+      "0003_closed_post_capture.sql",
+      "0004_archival_and_chunked_states.sql",
+      "0005_durable_rate_limits.sql",
+    ]) db.exec(await readFile("migrations/" + filename, "utf8"));
+    db.prepare("INSERT INTO users(id,created_at) VALUES(?,?)").run("u", 0);
+    db.prepare(
+      "INSERT INTO posts(user_id,day,revision,x,y,char,updated_at) VALUES(?,?,?,?,?,?,?)"
+    ).run("u", "2026-10-20", 1, 0, 0, "森", 0);
+    const seal = db.prepare(
+      "INSERT INTO day_closures(day,rules_json,user_count,previous_hash,closed_at) " +
+      "VALUES(?,?,?,?,?)"
+    );
+    seal.run("2026-10-20", "{}", 1, "a".repeat(64), 1);
+    db.exec(await readFile(
+      "migrations/0006_immutable_closure_counts.sql", "utf8"));
+    const closedCount = day => db.prepare(
+      "SELECT captured_post_count AS n FROM day_closures WHERE day=?"
+    ).get(day).n;
+    assert.equal(closedCount("2026-10-20"), 1,
+      "previously sealed days are backfilled from surviving frozen posts");
+    db.prepare(
+      "INSERT INTO orphaned_posts(day,revision,x,y,char) VALUES(?,?,?,?,?)"
+    ).run("2026-10-21", 1, 2, 2, "海");
+    seal.run("2026-10-21", "{}", 1, "b".repeat(64), 2);
+    assert.equal(closedCount("2026-10-21"), 1,
+      "new closure copies orphaned submissions and persists exact count");
+    db.prepare("DELETE FROM users WHERE id='u'").run();
+    db.prepare("DELETE FROM closed_posts WHERE day='2026-10-20'").run();
+    assert.equal(closedCount("2026-10-20"), 1,
+      "a deleted source and lost anonymous row do not erase expected count");
+    assert.equal(db.prepare(
+      "SELECT COUNT(*) AS n FROM closed_posts WHERE day='2026-10-20'"
+    ).get().n, 0);
+  } finally {
+    db.close();
+  }
+});
