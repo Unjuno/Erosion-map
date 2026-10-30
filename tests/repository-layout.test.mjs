@@ -25,6 +25,11 @@ test("public repository ships only technical migrations and config examples", as
   const rates = await readFile("migrations/0005_durable_rate_limits.sql", "utf8");
   assert.match(rates, /CREATE TABLE IF NOT EXISTS rate_limits/);
   assert.doesNotMatch(rates, /raw_ip|ip_address|credential_id/i);
+  const frozenCounts = await readFile(
+    "migrations/0006_immutable_closure_counts.sql", "utf8");
+  assert.match(frozenCounts, /captured_post_count/);
+  assert.match(frozenCounts, /AFTER INSERT ON day_closures/);
+  assert.match(frozenCounts, /COUNT\(\*\) FROM closed_posts/);
   const readme = await readFile("README.md", "utf8");
   assert.match(readme, /ChatGPT Sitesは未公開/);
   assert.match(readme, /新しく作成した空のD1/);

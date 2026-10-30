@@ -30,7 +30,7 @@ export function assessRelease(config = {}) {
   check("sites_private_preview", config.privatePreviewVerified === true,
     "Create and verify a ChatGPT Sites preview before a public release; GitHub CI is not a deployment");
   check("d1_schema", config.d1SchemaVerified === true,
-    "Provision a fresh Sites D1 database and verify migrations 0001 through 0005 in order");
+    "Provision a fresh Sites D1 database and verify migrations 0001 through 0006 in order");
   check("sites_native_database", config.databaseProvider === "sites-native",
     "SQLite prototype cannot be used as Sites production persistence");
   check("durable_scheduler", config.durableSchedulerVerified === true,

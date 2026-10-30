@@ -75,6 +75,7 @@ function fixture() {
   sqlite.exec(await readFile("migrations/0003_closed_post_capture.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0004_archival_and_chunked_states.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0005_durable_rate_limits.sql", "utf8"));
+  sqlite.exec(await readFile("migrations/0006_immutable_closure_counts.sql", "utf8"));
     },
     close() { sqlite.close(); },
   };
