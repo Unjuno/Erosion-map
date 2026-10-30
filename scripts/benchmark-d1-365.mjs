@@ -17,6 +17,7 @@ for (const path of [
   "migrations/0003_closed_post_capture.sql",
   "migrations/0004_archival_and_chunked_states.sql",
   "migrations/0005_durable_rate_limits.sql",
+  "migrations/0006_immutable_closure_counts.sql",
 ]) sqlite.exec(await readFile(path, "utf8"));
 const adapt = args => args.map(arg =>
   arg instanceof ArrayBuffer ? new Uint8Array(arg) : arg);
