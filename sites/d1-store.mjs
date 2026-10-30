@@ -1,7 +1,7 @@
 /**
  * Asynchronous D1 persistence adapter for ChatGPT Sites-compatible workers.
  *
- * Requires D1 migrations 0001 through 0005 in order.
+ * Requires D1 migrations 0001 through 0006 in order.
  * Public routes must authenticate sessions themselves; do not expose
  * createUser, submit, or publishing methods to anonymous calls.
  */
@@ -405,7 +405,11 @@ export class D1Store {
     // Recover legacy databases that accepted posts before any snapshot was
     // initialized, including anonymized posts from deleted accounts.
     const pending = await this.first(
-      "SELECT MIN(day) AS day FROM (SELECT day FROM posts UNION ALL SELECT day FROM orphaned_posts)"
+      "SELECT MIN(day) AS day FROM (" +
+      "SELECT day FROM posts UNION ALL " +
+      "SELECT day FROM orphaned_posts UNION ALL " +
+      "SELECT day FROM closed_posts UNION ALL " +
+      "SELECT day FROM day_closures)"
     );
     const today = dayAtInstant(instant);
     const firstDay = pending?.day && pending.day < today ? pending.day : today;
@@ -450,7 +454,9 @@ export class D1Store {
     assertIsoDay(day);
     return this.first(
       "SELECT day,rules_json AS rulesJson,user_count AS userCount," +
-      "previous_hash AS previousHash FROM day_closures WHERE day=?", day
+      "previous_hash AS previousHash," +
+      "captured_post_count AS capturedPostCount " +
+      "FROM day_closures WHERE day=?", day
     );
   }
   async submit(userId, day, x, y, char) {
@@ -561,6 +567,14 @@ export class D1Store {
     }
     const config = JSON.parse(closure.rulesJson);
     const frozen = await this.sealedPosts(day);
+    // The closure trigger records its exact copied count at the same atomic
+    // INSERT that sealed the day. It remains available even after the author
+    // deletes their account and original posts cascade away.
+    const captured = closure.capturedPostCount;
+    if (!Number.isSafeInteger(captured) || captured < 0 ||
+        frozen.length !== captured) {
+      throw new Error("day closure frozen post count integrity mismatch");
+    }
     // A corrupt or partial closure must not silently publish an empty map
     // and delete still-accepted posts. Frozen copies survive later account
     // deletion, so their count may be HIGHER than the surviving linked rows.
