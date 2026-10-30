@@ -647,3 +647,66 @@ test("an accepted expanded-grid post survives account deletion and later user-co
     ).get().n, 0);
   } finally { f.close(); }
 });
+
+
+test("a deleted account's sealed post remains recoverable after baseline snapshot loss", async () => {
+  const f = await makeFixture(new Date("2026-10-23T00:00:00Z"));
+  try {
+    // Simulate restoration of an incomplete database: a finalized day and
+    // anonymous posts survived, but the previously empty baseline did not.
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("survivor", {
+      id: "survivor-credential", publicKey: new Uint8Array([1, 7]), counter: 0,
+    }, true);
+    await f.store.submit("survivor", "2026-10-20", 0, 0, "森");
+    const previous = await f.store.snapshot("2026-10-19");
+    await f.store.run(
+      "INSERT INTO day_closures(day,rules_json,user_count,previous_hash,closed_at) " +
+      "VALUES(?,?,?,?,?)",
+      "2026-10-20",
+      JSON.stringify({ postStrength: 1, sameGlyphMode: "max",
+        minimumOutgoingInfluence: 1 }),
+      1, previous.sha256, 123
+    );
+    await f.store.deleteUser("survivor");
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM posts").get().n, 0);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM closed_posts").get().n, 1);
+    // Fault injection models an incomplete backup/restore, not normal daily use.
+    await f.store.run("DELETE FROM snapshots WHERE day=?", "2026-10-19");
+    const published = await f.store.publishClosedDays();
+    assert.ok(published.some(entry => entry.date === "2026-10-20"));
+    const restored = await f.store.snapshot("2026-10-20");
+    assert.ok(restored?.state.cells.some(cell =>
+      cell.char === "森" && cell.x === 0 && cell.y === 0));
+  } finally { f.close(); }
+});
+
+test("frozen-post removal after account deletion must never publish an empty day", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("owner", {
+      id: "frozen-integrity-key", publicKey: new Uint8Array([1]), counter: 0,
+    }, true);
+    await f.store.submit("owner", "2026-10-20", 0, 0, "光");
+    const previous = await f.store.snapshot("2026-10-19");
+    await f.store.run(
+      "INSERT INTO day_closures(day,rules_json,user_count,previous_hash,closed_at) " +
+      "VALUES(?,?,?,?,?)",
+      "2026-10-20",
+      JSON.stringify({ postStrength: 1, sameGlyphMode: "max",
+        minimumOutgoingInfluence: 1 }),
+      1, previous.sha256, 123
+    );
+    await f.store.deleteUser("owner");
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM posts").get().n, 0);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM closed_posts").get().n, 1);
+    // Corrupted database / bad operator action, after the source was deleted.
+    await f.store.run("DELETE FROM closed_posts WHERE day=?", "2026-10-20");
+    await assert.rejects(() => f.store.publishDay("2026-10-20"),
+      /frozen|capture|integrity|mismatch/i);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshots WHERE day='2026-10-20'"
+    ).get().n, 0, "never finalize a silently incomplete public snapshot");
+  } finally { f.close(); }
+});
