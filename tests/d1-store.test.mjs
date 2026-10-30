@@ -13,6 +13,7 @@ async function makeFixture(instant = new Date("2026-10-21T00:00:00.000Z"), optio
   sqlite.exec(await readFile("migrations/0003_closed_post_capture.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0004_archival_and_chunked_states.sql", "utf8"));
   sqlite.exec(await readFile("migrations/0005_durable_rate_limits.sql", "utf8"));
+  sqlite.exec(await readFile("migrations/0006_immutable_closure_counts.sql", "utf8"));
   const adapt = (parameters) => parameters.map((parameter) =>
     parameter instanceof ArrayBuffer ? new Uint8Array(parameter) : parameter);
   const asD1 = (row) => {
