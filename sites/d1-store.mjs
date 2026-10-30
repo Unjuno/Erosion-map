@@ -573,7 +573,7 @@ export class D1Store {
     const captured = closure.capturedPostCount;
     if (!Number.isSafeInteger(captured) || captured < 0 ||
         frozen.length !== captured) {
-      throw new Error("day closure frozen post count integrity mismatch");
+      throw new Error("day closure capture integrity mismatch (frozen post count)");
     }
     // A corrupt or partial closure must not silently publish an empty map
     // and delete still-accepted posts. Frozen copies survive later account
