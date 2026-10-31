@@ -534,6 +534,14 @@ export class D1Store {
     const previous = await this.latestState();
     if (!previous) throw new Error("database must be initialized");
     if (nextIsoDay(previous.date) !== day) {
+      // Another publisher may have committed this exact day between our
+      // initial (missing) snapshot lookup and the latest-state lookup.
+      // This is a successful concurrent publication, not a sequence error.
+      // Never accept a missing historical day as success.
+      if (previous.date >= day) {
+        const committed = await this.snapshot(day);
+        if (committed) return { state: committed.state, existed: true };
+      }
       throw new RangeError("daily snapshots must be published in sequence");
     }
     // Never finalize a day unless the required anonymous capture trigger
