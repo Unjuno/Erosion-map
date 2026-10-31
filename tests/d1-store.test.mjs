@@ -711,3 +711,188 @@ test("frozen-post removal after account deletion must never publish an empty day
     ).get().n, 0, "never finalize a silently incomplete public snapshot");
   } finally { f.close(); }
 });
+
+
+test("concurrent publisher recovers if another worker commits between snapshot check and latest-state lookup", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("concurrent-player", {
+      id: "concurrent-passkey", publicKey: new Uint8Array([3, 9]), counter: 0,
+    }, true);
+    await f.store.submit("concurrent-player", "2026-10-20", 0, 0, "空");
+    const other = new D1Store(f.db, {
+      clock: () => new Date("2026-10-22T00:00:00Z"),
+      rulesDefault: { sameGlyphMode: "max", minimumOutgoingInfluence: 1 },
+    });
+
+    const originalSnapshot = f.store.snapshot.bind(f.store);
+    let releasePaused;
+    let markPaused;
+    const released = new Promise(resolve => { releasePaused = resolve; });
+    const paused = new Promise(resolve => { markPaused = resolve; });
+    let interceptOnce = true;
+    f.store.snapshot = async (day) => {
+      const result = await originalSnapshot(day);
+      if (day === "2026-10-20" && interceptOnce) {
+        interceptOnce = false;
+        assert.equal(result, null, "both publishers must observe the initially missing snapshot");
+        markPaused();
+        await released;
+      }
+      return result;
+    };
+
+    const stale = f.store.publishDay("2026-10-20");
+    await paused;
+    let winner;
+    try {
+      winner = await other.publishDay("2026-10-20");
+    } finally {
+      releasePaused();
+    }
+    const recovered = await stale;
+    assert.equal(winner.existed, false);
+    assert.equal(recovered.existed, true,
+      "losing a publication race is idempotent, not a day-order error");
+    assert.deepEqual(recovered.state, winner.state);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshots WHERE day='2026-10-20'"
+    ).get().n, 1);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM closed_posts WHERE day='2026-10-20'"
+    ).get().n, 0);
+  } finally { f.close(); }
+});
+
+
+test("concurrent-publication recovery must not conceal a genuinely missing historical day", async () => {
+  const f = await makeFixture(new Date("2026-10-23T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    // Fault injection: the database has a later day but missed the day
+    // immediately following the baseline. A retry MUST fail closed rather
+    // than pretend the missing date was finalized by another worker.
+    const fake = {
+      date: "2026-10-21",
+      bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
+      cells: [],
+    };
+    const encoded = JSON.stringify(fake);
+    await f.store.run(
+      "INSERT INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+      fake.date, encoded, await hashText(encoded), 123
+    );
+    await assert.rejects(
+      () => f.store.publishDay("2026-10-20"),
+      /daily snapshots must be published in sequence/
+    );
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM day_closures WHERE day='2026-10-20'"
+    ).get().n, 0, "no day closure or post cleanup may occur for a missing historical state");
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshots WHERE day='2026-10-20'"
+    ).get().n, 0);
+  } finally { f.close(); }
+});
+
+
+test("conditional D1 expiry cleanup preserves future sessions, challenges and rate buckets", async () => {
+  const f = await makeFixture(new Date("2026-10-21T00:00:00Z"));
+  try {
+    await f.store.registerCredential("expiry-user", {
+      id: "expiry-passkey", publicKey: new Uint8Array([2]), counter: 0,
+    }, true);
+    const now = f.store.now();
+    for (const [hash, until] of [["a".repeat(64), now - 1], ["b".repeat(64), now + 900_000]]) {
+      await f.store.run(
+        "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+        hash, "expiry-user", until
+      );
+    }
+    for (const [hash, until] of [["c".repeat(64), now - 1], ["d".repeat(64), now + 900_000]]) {
+      await f.store.run(
+        "INSERT INTO challenges(token_hash,kind,challenge,user_id,expires_at) VALUES(?,?,?,?,?)",
+        hash, "authenticate", "sufficiently-long-challenge-token", null, until
+      );
+    }
+    for (const [hash, until] of [["e".repeat(64), now - 1], ["f".repeat(64), now + 900_000]]) {
+      await f.store.run(
+        "INSERT INTO rate_limits(bucket_hash,window_end,attempts) VALUES(?,?,?)",
+        hash, until, 1
+      );
+    }
+    await f.store.pruneExpirations();
+    for (const [table, key] of [
+      ["sessions", "token_hash"],
+      ["challenges", "token_hash"],
+      ["rate_limits", "bucket_hash"],
+    ]) {
+      assert.deepEqual(f.sqlite.prepare("SELECT " + key + " AS digest FROM " + table)
+        .all().map(row => row.digest), [
+        ({ sessions: "b", challenges: "d", rate_limits: "f" })[table].repeat(64),
+      ]);
+    }
+    // Future-dated records must never trigger unnecessary writes.
+    const queries = [];
+    const originalPrepare = f.db.prepare.bind(f.db);
+    f.db.prepare = sql => {
+      queries.push(sql);
+      return originalPrepare(sql);
+    };
+    await f.store.pruneExpirations();
+    assert.ok(!queries.some(query => /^DELETE FROM /.test(query)),
+      "the second cleanup should read only expiry metadata");
+  } finally { f.close(); }
+});
+
+
+test("chunked history reads use bounded pages and preserve whole-state checksums", async () => {
+  const f = await makeFixture();
+  try {
+    const state = {
+      date: "2026-10-20",
+      bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
+      cells: [{ x: 3, y: -4, char: "海", n: 1 }],
+    };
+    const serialized = JSON.stringify(state);
+    const digest = await hashText(serialized);
+    // Fault-free legacy chunk storage with many tiny rows exercises paging
+    // without allocating a huge multi-megabyte test snapshot.
+    await f.store.run(
+      "INSERT INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+      state.date, "@chunked-snapshot:v1", digest, 123
+    );
+    const fragments = serialized.match(/.{1,9}/g);
+    assert.ok(fragments.length > 8);
+    for (const [index, fragment] of fragments.entries()) {
+      await f.store.run(
+        "INSERT INTO snapshot_chunks(day,chunk_index,chunk_data) VALUES(?,?,?)",
+        state.date, index, fragment
+      );
+    }
+    const originalPrepare = f.db.prepare.bind(f.db);
+    const pages = [];
+    f.db.prepare = sql => {
+      if (/FROM snapshot_chunks WHERE day=/.test(sql)) {
+        assert.match(sql, /LIMIT 8\b/,
+          "D1 chunks must be read in bounded pages, never an unbounded result set");
+        pages.push(sql);
+      }
+      return originalPrepare(sql);
+    };
+    const read = await f.store.snapshot(state.date);
+    assert.deepEqual(read.state, state);
+    assert.equal(read.sha256, digest);
+    assert.ok(pages.length >= 2,
+      "more than eight chunks require multiple D1 result pages");
+    f.sqlite.prepare(
+      "DELETE FROM snapshot_chunks WHERE day=? AND chunk_index=?"
+    ).run(state.date, 8);
+    await assert.rejects(
+      () => f.store.snapshot(state.date),
+      /chunk order|checksum/,
+      "missing data on a later result page must never pass verification"
+    );
+  } finally { f.close(); }
+});

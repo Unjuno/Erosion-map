@@ -316,27 +316,58 @@ export class D1Store {
   }
   async pruneExpirations() {
     const now = this.now();
-    await this.db.batch([
-      this.p("DELETE FROM sessions WHERE expires_at<=?", now),
-      this.p("DELETE FROM challenges WHERE expires_at<=?", now),
-      this.p("DELETE FROM rate_limits WHERE window_end<=?", now),
-    ]);
+    // Public /api/status runs on every page visit. Avoid three no-op DELETEs
+    // and an unnecessary D1 write batch when nothing has expired. The expiry
+    // indexes make each EXISTS cheap; keep the write transaction for tables
+    // that actually have expired records. A concurrent expiry may wait until
+    // the next status/scheduled maintenance invocation.
+    const due = await this.first(
+      "SELECT " +
+      "EXISTS(SELECT 1 FROM sessions WHERE expires_at<=?) AS sessionsDue," +
+      "EXISTS(SELECT 1 FROM challenges WHERE expires_at<=?) AS challengesDue," +
+      "EXISTS(SELECT 1 FROM rate_limits WHERE window_end<=?) AS limitsDue",
+      now, now, now
+    );
+    const deletes = [];
+    if (due?.sessionsDue) {
+      deletes.push(this.p("DELETE FROM sessions WHERE expires_at<=?", now));
+    }
+    if (due?.challengesDue) {
+      deletes.push(this.p("DELETE FROM challenges WHERE expires_at<=?", now));
+    }
+    if (due?.limitsDue) {
+      deletes.push(this.p("DELETE FROM rate_limits WHERE window_end<=?", now));
+    }
+    if (deletes.length) await this.db.batch(deletes);
   }
   async decodeState(row, day) {
     if (!row) return null;
     let serialized = row.state_json;
     if (serialized === CHUNKED_SNAPSHOT_MARKER) {
-      const chunks = await this.all(
-        "SELECT chunk_index AS chunkIndex, chunk_data AS chunkData " +
-        "FROM snapshot_chunks WHERE day=? ORDER BY chunk_index", day
-      );
-      if (chunks.length === 0) throw new Error("published snapshot chunks missing");
-      serialized = chunks.map((chunk, index) => {
-        if (Number(chunk.chunkIndex) !== index || typeof chunk.chunkData !== "string") {
-          throw new Error("published snapshot chunk order is invalid");
+      // D1 limits a single query's result to 50 MB starting 2026-11-04.
+      // Fetch at most eight 1.28MB chunks per query, keeping each result
+      // bounded while verifying ordering and the FULL reconstructed SHA.
+      const pieces = [];
+      let nextIndex = 0;
+      while (true) {
+        const page = await this.all(
+          "SELECT chunk_index AS chunkIndex, chunk_data AS chunkData " +
+          "FROM snapshot_chunks WHERE day=? AND chunk_index>=? " +
+          "ORDER BY chunk_index LIMIT 8", day, nextIndex
+        );
+        if (page.length === 0) break;
+        for (const chunk of page) {
+          if (Number(chunk.chunkIndex) !== nextIndex ||
+              typeof chunk.chunkData !== "string") {
+            throw new Error("published snapshot chunk order is invalid");
+          }
+          pieces.push(chunk.chunkData);
+          nextIndex++;
         }
-        return chunk.chunkData;
-      }).join("");
+        if (page.length < 8) break;
+      }
+      if (pieces.length === 0) throw new Error("published snapshot chunks missing");
+      serialized = pieces.join("");
     }
     // Reconstitute canonical JSON before checking the public-state digest.
     serialized = decodeSnapshotStorage(serialized);
@@ -534,6 +565,14 @@ export class D1Store {
     const previous = await this.latestState();
     if (!previous) throw new Error("database must be initialized");
     if (nextIsoDay(previous.date) !== day) {
+      // Another publisher may have committed this exact day between our
+      // initial (missing) snapshot lookup and the latest-state lookup.
+      // This is a successful concurrent publication, not a sequence error.
+      // Never accept a missing historical day as success.
+      if (previous.date >= day) {
+        const committed = await this.snapshot(day);
+        if (committed) return { state: committed.state, existed: true };
+      }
       throw new RangeError("daily snapshots must be published in sequence");
     }
     // Never finalize a day unless the required anonymous capture trigger
