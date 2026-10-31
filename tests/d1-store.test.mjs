@@ -795,3 +795,53 @@ test("concurrent-publication recovery must not conceal a genuinely missing histo
     ).get().n, 0);
   } finally { f.close(); }
 });
+
+
+test("conditional D1 expiry cleanup preserves future sessions, challenges and rate buckets", async () => {
+  const f = await makeFixture(new Date("2026-10-21T00:00:00Z"));
+  try {
+    await f.store.registerCredential("expiry-user", {
+      id: "expiry-passkey", publicKey: new Uint8Array([2]), counter: 0,
+    }, true);
+    const now = f.store.now();
+    for (const [hash, until] of [["a".repeat(64), now - 1], ["b".repeat(64), now + 900_000]]) {
+      await f.store.run(
+        "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+        hash, "expiry-user", until
+      );
+    }
+    for (const [hash, until] of [["c".repeat(64), now - 1], ["d".repeat(64), now + 900_000]]) {
+      await f.store.run(
+        "INSERT INTO challenges(token_hash,kind,challenge,user_id,expires_at) VALUES(?,?,?,?,?)",
+        hash, "authenticate", "sufficiently-long-challenge-token", null, until
+      );
+    }
+    for (const [hash, until] of [["e".repeat(64), now - 1], ["f".repeat(64), now + 900_000]]) {
+      await f.store.run(
+        "INSERT INTO rate_limits(bucket_hash,window_end,attempts) VALUES(?,?,?)",
+        hash, until, 1
+      );
+    }
+    await f.store.pruneExpirations();
+    for (const [table, key] of [
+      ["sessions", "token_hash"],
+      ["challenges", "token_hash"],
+      ["rate_limits", "bucket_hash"],
+    ]) {
+      assert.deepEqual(f.sqlite.prepare("SELECT " + key + " AS digest FROM " + table)
+        .all().map(row => row.digest), [
+        ({ sessions: "b", challenges: "d", rate_limits: "f" })[table].repeat(64),
+      ]);
+    }
+    // Future-dated records must never trigger unnecessary writes.
+    const queries = [];
+    const originalPrepare = f.db.prepare.bind(f.db);
+    f.db.prepare = sql => {
+      queries.push(sql);
+      return originalPrepare(sql);
+    };
+    await f.store.pruneExpirations();
+    assert.ok(!queries.some(query => /^DELETE FROM /.test(query)),
+      "the second cleanup should read only expiry metadata");
+  } finally { f.close(); }
+});
