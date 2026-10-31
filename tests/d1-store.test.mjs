@@ -845,3 +845,46 @@ test("conditional D1 expiry cleanup preserves future sessions, challenges and ra
       "the second cleanup should read only expiry metadata");
   } finally { f.close(); }
 });
+
+
+test("chunked history reads use bounded pages and preserve whole-state checksums", async () => {
+  const f = await makeFixture();
+  try {
+    const state = {
+      date: "2026-10-20",
+      bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
+      cells: [{ x: 3, y: -4, char: "海", n: 1 }],
+    };
+    const serialized = JSON.stringify(state);
+    const digest = await hashText(serialized);
+    // Fault-free legacy chunk storage with many tiny rows exercises paging
+    // without allocating a huge multi-megabyte test snapshot.
+    await f.store.run(
+      "INSERT INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+      state.date, "@chunked-snapshot:v1", digest, 123
+    );
+    const fragments = serialized.match(/.{1,9}/g);
+    assert.ok(fragments.length > 8);
+    for (const [index, fragment] of fragments.entries()) {
+      await f.store.run(
+        "INSERT INTO snapshot_chunks(day,chunk_index,chunk_data) VALUES(?,?,?)",
+        state.date, index, fragment
+      );
+    }
+    const originalPrepare = f.db.prepare.bind(f.db);
+    const pages = [];
+    f.db.prepare = sql => {
+      if (/FROM snapshot_chunks WHERE day=/.test(sql)) {
+        assert.match(sql, /LIMIT 8\b/,
+          "D1 chunks must be read in bounded pages, never an unbounded result set");
+        pages.push(sql);
+      }
+      return originalPrepare(sql);
+    };
+    const read = await f.store.snapshot(state.date);
+    assert.deepEqual(read.state, state);
+    assert.equal(read.sha256, digest);
+    assert.ok(pages.length >= 2,
+      "more than eight chunks require multiple D1 result pages");
+  } finally { f.close(); }
+});
