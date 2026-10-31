@@ -344,17 +344,30 @@ export class D1Store {
     if (!row) return null;
     let serialized = row.state_json;
     if (serialized === CHUNKED_SNAPSHOT_MARKER) {
-      const chunks = await this.all(
-        "SELECT chunk_index AS chunkIndex, chunk_data AS chunkData " +
-        "FROM snapshot_chunks WHERE day=? ORDER BY chunk_index", day
-      );
-      if (chunks.length === 0) throw new Error("published snapshot chunks missing");
-      serialized = chunks.map((chunk, index) => {
-        if (Number(chunk.chunkIndex) !== index || typeof chunk.chunkData !== "string") {
-          throw new Error("published snapshot chunk order is invalid");
+      // D1 limits a single query's result to 50 MB starting 2026-11-04.
+      // Fetch at most eight 1.28MB chunks per query, keeping each result
+      // bounded while verifying ordering and the FULL reconstructed SHA.
+      const pieces = [];
+      let nextIndex = 0;
+      while (true) {
+        const page = await this.all(
+          "SELECT chunk_index AS chunkIndex, chunk_data AS chunkData " +
+          "FROM snapshot_chunks WHERE day=? AND chunk_index>=? " +
+          "ORDER BY chunk_index LIMIT 8", day, nextIndex
+        );
+        if (page.length === 0) break;
+        for (const chunk of page) {
+          if (Number(chunk.chunkIndex) !== nextIndex ||
+              typeof chunk.chunkData !== "string") {
+            throw new Error("published snapshot chunk order is invalid");
+          }
+          pieces.push(chunk.chunkData);
+          nextIndex++;
         }
-        return chunk.chunkData;
-      }).join("");
+        if (page.length < 8) break;
+      }
+      if (pieces.length === 0) throw new Error("published snapshot chunks missing");
+      serialized = pieces.join("");
     }
     // Reconstitute canonical JSON before checking the public-state digest.
     serialized = decodeSnapshotStorage(serialized);
