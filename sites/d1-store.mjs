@@ -316,11 +316,29 @@ export class D1Store {
   }
   async pruneExpirations() {
     const now = this.now();
-    await this.db.batch([
-      this.p("DELETE FROM sessions WHERE expires_at<=?", now),
-      this.p("DELETE FROM challenges WHERE expires_at<=?", now),
-      this.p("DELETE FROM rate_limits WHERE window_end<=?", now),
-    ]);
+    // Public /api/status runs on every page visit. Avoid three no-op DELETEs
+    // and an unnecessary D1 write batch when nothing has expired. The expiry
+    // indexes make each EXISTS cheap; keep the write transaction for tables
+    // that actually have expired records. A concurrent expiry may wait until
+    // the next status/scheduled maintenance invocation.
+    const due = await this.first(
+      "SELECT " +
+      "EXISTS(SELECT 1 FROM sessions WHERE expires_at<=?) AS sessionsDue," +
+      "EXISTS(SELECT 1 FROM challenges WHERE expires_at<=?) AS challengesDue," +
+      "EXISTS(SELECT 1 FROM rate_limits WHERE window_end<=?) AS limitsDue",
+      now, now, now
+    );
+    const deletes = [];
+    if (due?.sessionsDue) {
+      deletes.push(this.p("DELETE FROM sessions WHERE expires_at<=?", now));
+    }
+    if (due?.challengesDue) {
+      deletes.push(this.p("DELETE FROM challenges WHERE expires_at<=?", now));
+    }
+    if (due?.limitsDue) {
+      deletes.push(this.p("DELETE FROM rate_limits WHERE window_end<=?", now));
+    }
+    if (deletes.length) await this.db.batch(deletes);
   }
   async decodeState(row, day) {
     if (!row) return null;
