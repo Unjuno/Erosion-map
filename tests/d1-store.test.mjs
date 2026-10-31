@@ -886,5 +886,13 @@ test("chunked history reads use bounded pages and preserve whole-state checksums
     assert.equal(read.sha256, digest);
     assert.ok(pages.length >= 2,
       "more than eight chunks require multiple D1 result pages");
+    f.sqlite.prepare(
+      "DELETE FROM snapshot_chunks WHERE day=? AND chunk_index=?"
+    ).run(state.date, 8);
+    await assert.rejects(
+      () => f.store.snapshot(state.date),
+      /chunk order|checksum/,
+      "missing data on a later result page must never pass verification"
+    );
   } finally { f.close(); }
 });
