@@ -764,3 +764,34 @@ test("concurrent publisher recovers if another worker commits between snapshot c
     ).get().n, 0);
   } finally { f.close(); }
 });
+
+
+test("concurrent-publication recovery must not conceal a genuinely missing historical day", async () => {
+  const f = await makeFixture(new Date("2026-10-23T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    // Fault injection: the database has a later day but missed the day
+    // immediately following the baseline. A retry MUST fail closed rather
+    // than pretend the missing date was finalized by another worker.
+    const fake = {
+      date: "2026-10-21",
+      bounds: { minX: -250, maxX: 249, minY: -250, maxY: 249 },
+      cells: [],
+    };
+    const encoded = JSON.stringify(fake);
+    await f.store.run(
+      "INSERT INTO snapshots(day,state_json,sha256,created_at) VALUES(?,?,?,?)",
+      fake.date, encoded, await hashText(encoded), 123
+    );
+    await assert.rejects(
+      () => f.store.publishDay("2026-10-20"),
+      /daily snapshots must be published in sequence/
+    );
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM day_closures WHERE day='2026-10-20'"
+    ).get().n, 0, "no day closure or post cleanup may occur for a missing historical state");
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshots WHERE day='2026-10-20'"
+    ).get().n, 0);
+  } finally { f.close(); }
+});
