@@ -711,3 +711,56 @@ test("frozen-post removal after account deletion must never publish an empty day
     ).get().n, 0, "never finalize a silently incomplete public snapshot");
   } finally { f.close(); }
 });
+
+
+test("concurrent publisher recovers if another worker commits between snapshot check and latest-state lookup", async () => {
+  const f = await makeFixture(new Date("2026-10-22T00:00:00Z"));
+  try {
+    await f.store.initialize(new Date("2026-10-20T12:00:00Z"));
+    await f.store.registerCredential("concurrent-player", {
+      id: "concurrent-passkey", publicKey: new Uint8Array([3, 9]), counter: 0,
+    }, true);
+    await f.store.submit("concurrent-player", "2026-10-20", 0, 0, "空");
+    const other = new D1Store(f.db, {
+      clock: () => new Date("2026-10-22T00:00:00Z"),
+      rulesDefault: { sameGlyphMode: "max", minimumOutgoingInfluence: 1 },
+    });
+
+    const originalSnapshot = f.store.snapshot.bind(f.store);
+    let releasePaused;
+    let markPaused;
+    const released = new Promise(resolve => { releasePaused = resolve; });
+    const paused = new Promise(resolve => { markPaused = resolve; });
+    let interceptOnce = true;
+    f.store.snapshot = async (day) => {
+      const result = await originalSnapshot(day);
+      if (day === "2026-10-20" && interceptOnce) {
+        interceptOnce = false;
+        assert.equal(result, null, "both publishers must observe the initially missing snapshot");
+        markPaused();
+        await released;
+      }
+      return result;
+    };
+
+    const stale = f.store.publishDay("2026-10-20");
+    await paused;
+    let winner;
+    try {
+      winner = await other.publishDay("2026-10-20");
+    } finally {
+      releasePaused();
+    }
+    const recovered = await stale;
+    assert.equal(winner.existed, false);
+    assert.equal(recovered.existed, true,
+      "losing a publication race is idempotent, not a day-order error");
+    assert.deepEqual(recovered.state, winner.state);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM snapshots WHERE day='2026-10-20'"
+    ).get().n, 1);
+    assert.equal(f.sqlite.prepare(
+      "SELECT COUNT(*) AS n FROM closed_posts WHERE day='2026-10-20'"
+    ).get().n, 0);
+  } finally { f.close(); }
+});
