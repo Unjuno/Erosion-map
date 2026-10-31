@@ -391,3 +391,26 @@ test("Sites status and history do not decode the full map when already current",
       "full map must still be verified for the actual map request");
   } finally { f.close(); }
 });
+
+
+test("repeated read-only status checks do not issue expiry DELETEs when no rows have expired", async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    await f.fetcher("/api/status"); // Initialize without expired records.
+    const statements = [];
+    const originalPrepare = f.env.DB.prepare.bind(f.env.DB);
+    f.env.DB.prepare = (sql) => {
+      statements.push(sql);
+      return originalPrepare(sql);
+    };
+    for (let i = 0; i < 8; i++) {
+      const response = await f.fetcher("/api/status");
+      assert.equal(response.status, 200);
+    }
+    const expiredDeletions = statements.filter(sql =>
+      /^DELETE FROM (?:sessions|challenges|rate_limits) WHERE /i.test(sql));
+    assert.deepEqual(expiredDeletions, [],
+      "public status requests must not issue expensive no-op writes on every visit");
+  } finally { f.close(); }
+});
