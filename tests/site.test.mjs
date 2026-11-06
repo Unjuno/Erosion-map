@@ -88,6 +88,8 @@ test("redesigned UI exposes real archive provenance and mutually exclusive auth 
   assert.match(map, /id="retryArchive" hidden/);
   assert.match(app, /initialArchiveState\(\)/);
   assert.match(app, /transitionArchive/);
+  assert.match(app, /mapPanel\.addEventListener\(eventName/);
+  assert.match(app, /SHOW_DEMO/);
   assert.match(app, /VERIFIED STATIC STATES \/ OFFLINE ARCHIVE/);
   assert.match(account, /id="accountMain" aria-busy="true"/);
   assert.match(account, /id="operationStatus"[^>]*role="status"/);
