@@ -1,6 +1,6 @@
 # EROSION MAP — 1日1文字 侵食マップ
 
-[ソースコード](https://github.com/Unjuno/Erosion-map) · [自動テスト](https://github.com/Unjuno/Erosion-map/actions) · [侵食ルール](docs/ALGORITHM.md)
+[ソースコード](https://github.com/Unjuno/Erosion-map) · [自動テスト](https://github.com/Unjuno/Erosion-map/actions) · [侵食ルール](docs/ALGORITHM.md) · [状態機械・アーキテクチャ](docs/STATE-MACHINES.md)
 
 1日に1文字だけ座標を指定して投稿し、上下左右からの影響を**受け取る側のマス**が計算して日ごとに変化するマップを、ChatGPT Sitesで公開するための開発リポジトリです。メールアドレス・パスワードの入力に代わりパスキー（WebAuthn）認証を利用する設計です。
 
@@ -19,9 +19,22 @@
 | DB（Sites対応） | sites/d1-store.mjs、D1 schema migration |
 | Sites API | sites/worker.mjs、Fetch API / WebAuthn / D1 / 静的Assets |
 | 毎日の確定 | JST日付境界、状態スナップショットの不変化、再実行の重複防止 |
+| 状態機械 | `sites/day-state.mjs`（日次）、`sites/auth-state.mjs`（WebAuthn用途）、`public/ui-state.js`（操作／履歴表示） |
+| 検証済み履歴 | API整合性エラーは隠さず表示、API不在のときだけ静的履歴をSHA-256検証して使用 |
+| ランキング | `public/ranking-aggregate.js`で各日を逐次集計し、過去の地図配列を保持しない |
 | テスト | Node 22/24、模擬WebAuthn署名・D1互換SQL・API・数値計算・静的表示 |
 
 **現状は「未公開のコード開発版」です。** ChatGPT Sites上の実デプロイ・D1バインディング・実機パスキー・公開前のセキュリティ監査はいずれも未検証です。GitHub CI成功を公開状態や本番動作の証明として扱わないでください。
+
+## 設計・UXのレビュー基準
+
+パスキーのログイン・投稿・退会は、同じブラウザで**一度に1操作のみ**進めます。途中のエラーや通信切断は「成功」と区別し、必ずサーバーの認証状態を再確認します。
+
+マップ画面は、保存されないデモ、検証済みの静的履歴、DB由来の確定履歴を区別します。APIの整合性検証に失敗した場合、静的データに暗黙的に切り替えません。ランキングも、確定データの検証に失敗したときは合成順位を代替表示しません。
+
+日次データは`open → sealed → published`の単調な状態機械として取り扱い、確定後の再投稿や状態の巻き戻しを禁止します。各状態・イベント・異常時の保全条件と現在の未承認ルールは[状態機械・アーキテクチャ仕様](docs/STATE-MACHINES.md)を参照してください。
+
+今回の改善はコード・UI状態の自動テストによる検証であり、**実ブラウザの視覚・アクセシビリティ測定、実D1負荷、ChatGPT Sitesでの動作確認を完了したという意味ではありません**。
 
 ## ローカル開発
 
