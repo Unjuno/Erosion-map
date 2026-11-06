@@ -4,6 +4,21 @@
  */
 import { assertIsoDay } from "./calendar.js";
 
+/**
+ * The archive boundary is a state machine, not a generic try/fallback.
+ * Only an ABSENT API endpoint authorizes loading a static archive.
+ * A present API with broken hashes, invalid JSON, or server failure must
+ * never silently downgrade to stale demo/static data.
+ */
+export class ArchiveError extends Error {
+  constructor(kind, message, cause) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "ArchiveError";
+    this.kind = kind;
+  }
+}
+
+
 function assertIndexEntry(value) {
   const date = value?.date ?? value?.day;
   assertIsoDay(date);
@@ -14,11 +29,25 @@ function assertIndexEntry(value) {
   return { date, sha256: value.sha256 };
 }
 async function fetchJSON(fetcher, path) {
-  const response = await fetcher(path, { credentials: "same-origin", cache: "no-store" });
-  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-    throw new Error("archive endpoint is unavailable");
+  let response;
+  try {
+    response = await fetcher(path, { credentials: "same-origin", cache: "no-store" });
+  } catch (cause) {
+    throw new ArchiveError("transport", "archive request failed", cause);
   }
-  return response.json();
+  if (response.status === 404 || response.status === 501) {
+    throw new ArchiveError("absent", "archive endpoint is not installed");
+  }
+  if (!response.ok) {
+    throw new ArchiveError("transport", "archive endpoint failed: HTTP " + response.status);
+  }
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    throw new ArchiveError("integrity", "archive endpoint returned a non-JSON response");
+  }
+  try { return await response.json(); }
+  catch (cause) {
+    throw new ArchiveError("integrity", "archive index contains invalid JSON", cause);
+  }
 }
 function validateSnapshot(state, date) {
   if (state?.date !== date || !state.bounds ||
@@ -72,8 +101,11 @@ async function load(fetcher, cryptoProvider, limit, kind) {
   const index = await fetchJSON(fetcher,
     isAPI ? "./api/history" : "./data/index.json");
   const entries = isAPI ? index.days : index;
-  if (!Array.isArray(entries) || entries.length === 0) {
-    throw new Error("archive is empty");
+  if (!Array.isArray(entries)) {
+    throw new ArchiveError("integrity", "archive index has an invalid structure");
+  }
+  if (entries.length === 0) {
+    throw new ArchiveError("empty", "no finalized daily archive exists yet");
   }
   const selection = isAPI ? entries.slice(0, limit).reverse() : entries.slice(-limit);
   const records = selection.map(assertIndexEntry);
@@ -101,11 +133,20 @@ export async function loadPublishedArchive({
   try {
     return await load(fetcher, cryptoProvider, limit, "api");
   } catch (error) {
+    // A valid API history index is authoritative. Integrity failures,
+    // transient service outages, or even a legitimately empty history may
+    // not be replaced by a static fallback masquerading as current data.
+    if (!(error instanceof ArchiveError) || error.kind !== "absent") {
+      throw error;
+    }
     firstFailure = error;
   }
   try {
     return await load(fetcher, cryptoProvider, limit, "static");
   } catch (error) {
+    if (error instanceof ArchiveError && error.kind === "absent") {
+      throw new ArchiveError("empty", "no finalized daily archive exists yet", error);
+    }
     throw new AggregateError([firstFailure, error],
       "neither API nor static archive could be verified");
   }
