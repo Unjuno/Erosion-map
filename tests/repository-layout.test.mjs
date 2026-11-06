@@ -30,6 +30,11 @@ test("public repository ships only technical migrations and config examples", as
   assert.match(frozenCounts, /captured_post_count/);
   assert.match(frozenCounts, /AFTER INSERT ON day_closures/);
   assert.match(frozenCounts, /COUNT\(\*\) FROM closed_posts/);
+  const design = await readFile("docs/STATE-MACHINES.md", "utf8");
+  assert.match(design, /日次データの状態機械/);
+  assert.match(design, /パスキーチャレンジの状態機械/);
+  assert.match(design, /マップ・履歴表示の状態機械/);
+  assert.match(design, /ChatGPT Sitesは未公開/);
   const readme = await readFile("README.md", "utf8");
   assert.match(readme, /ChatGPT Sitesは未公開/);
   assert.match(readme, /新しく作成した空のD1/);
