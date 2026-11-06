@@ -40,6 +40,18 @@ const modelRules = Object.freeze({
   playable: Object.freeze({ sameGlyphMode: "max", minimumOutgoingInfluence: 1 }),
 });
 const currentRules = () => modelRules[selectedModel];
+// A slow history fetch must not steal focus from a user already operating
+// the demo: any genuine map control interaction expresses a demo preference.
+const mapPanel = document.querySelector(".map-panel");
+if (mapPanel) {
+  for (const eventName of ["pointerdown", "keydown", "wheel"]) {
+    mapPanel.addEventListener(eventName, () => {
+      if (archiveState.phase === "loading") {
+        archiveState = transitionArchive(archiveState, { type: "SHOW_DEMO" });
+      }
+    }, { capture: true, passive: true });
+  }
+}
 let playback = null;
 let activePointer = null;
 let renderPending = false;
