@@ -96,7 +96,7 @@ async function fetchState(fetcher, url, record, cryptoProvider, wrapped) {
   }
   return state;
 }
-async function load(fetcher, cryptoProvider, limit, kind) {
+async function load(fetcher, cryptoProvider, limit, kind, onSnapshot = null) {
   const isAPI = kind === "api";
   const index = await fetchJSON(fetcher,
     isAPI ? "./api/history" : "./data/index.json");
@@ -110,28 +110,37 @@ async function load(fetcher, cryptoProvider, limit, kind) {
   const selection = isAPI ? entries.slice(0, limit).reverse() : entries.slice(-limit);
   const records = selection.map(assertIndexEntry);
   const states = [];
-  for (let i = 0; i < records.length; i += 4) {
-    const batch = records.slice(i, i + 4);
+  // Callers computing rankings should not keep 30 full snapshots in memory.
+  // Deliver each authenticated state in chronological order, discarding it
+  // immediately after aggregation; the interactive timeline still requests
+  // its smaller window as an array.
+  const batchSize = onSnapshot ? 1 : 4;
+  for (let i = 0; i < records.length; i += batchSize) {
+    const batch = records.slice(i, i + batchSize);
     const subset = await Promise.all(batch.map((record) =>
       fetchState(fetcher,
         isAPI ? "./api/state?date=" + encodeURIComponent(record.date)
               : "./data/state-" + record.date + ".json",
         record, cryptoProvider, isAPI)));
-    states.push(...subset);
+    for (const state of subset) {
+      if (onSnapshot) await onSnapshot(state);
+      else states.push(state);
+    }
   }
-  return { source: isAPI ? "api" : "static", states };
+  return { source: isAPI ? "api" : "static", states, loadedDays: records.length };
 }
-export async function loadPublishedArchive({
+async function verifiedArchive({
   fetcher = fetch,
   cryptoProvider = globalThis.crypto,
   limit = 21,
+  onSnapshot = null,
 } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 30) {
     throw new RangeError("archive limit must be 1..30");
   }
   let firstFailure;
   try {
-    return await load(fetcher, cryptoProvider, limit, "api");
+    return await load(fetcher, cryptoProvider, limit, "api", onSnapshot);
   } catch (error) {
     // A valid API history index is authoritative. Integrity failures,
     // transient service outages, or even a legitimately empty history may
@@ -142,7 +151,7 @@ export async function loadPublishedArchive({
     firstFailure = error;
   }
   try {
-    return await load(fetcher, cryptoProvider, limit, "static");
+    return await load(fetcher, cryptoProvider, limit, "static", onSnapshot);
   } catch (error) {
     if (error instanceof ArchiveError && error.kind === "absent") {
       throw new ArchiveError("empty", "no finalized daily archive exists yet", error);
@@ -150,4 +159,21 @@ export async function loadPublishedArchive({
     throw new AggregateError([firstFailure, error],
       "neither API nor static archive could be verified");
   }
+}
+
+/** Interactive timeline: retain its short verified history window. */
+export async function loadPublishedArchive(options = {}) {
+  return verifiedArchive(options);
+}
+
+/**
+ * Streaming verified archive visitor for aggregate screens. Each full state
+ * is released before the next day is fetched, avoiding a retained 30-day map
+ * array when only historical presence counts are required.
+ */
+export async function visitPublishedArchive(options = {}) {
+  if (typeof options.onSnapshot !== "function") {
+    throw new TypeError("onSnapshot callback is required");
+  }
+  return verifiedArchive(options);
 }
