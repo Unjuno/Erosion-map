@@ -7,7 +7,7 @@ import { buildDailySnapshot } from "../dist/daily.js";
 import { nextIsoDay } from "../dist/calendar.js";
 
 test("site bundle contains all offline-loadable assets", async () => {
-  for (const name of ["index.html", "styles.css", "app.js",
+  for (const name of ["index.html", "styles.css", "app.js", "ui-state.js",
     "engine.js", "daily.js", "calendar.js", "ranking.html", "ranking.css", "ranking.js", "demo-data.js", "archive.js", "policy.html", "policy.css"]) {
     const result = await stat(join("site", name));
     assert.ok(result.size > 0, name);
@@ -74,4 +74,26 @@ test("development preview labels do not claim an unlaunched public Sites deploym
   assert.doesNotMatch(mapJS, /LIVE SIMULATION \/ LOCAL DEMO/);
   assert.doesNotMatch(mapJS, /PUBLISHED SNAPSHOTS \/ DEVELOPMENT DATABASE/);
   assert.match(accountJS, /一般公開済みとは判断できません/);
+});
+
+test("redesigned UI exposes real archive provenance and mutually exclusive auth actions", async () => {
+  const map = await readFile(join("site", "index.html"), "utf8");
+  const app = await readFile(join("site", "app.js"), "utf8");
+  const account = await readFile(join("site", "account.html"), "utf8");
+  const accountJS = await readFile(join("site", "account.js"), "utf8");
+  const rankingJS = await readFile(join("site", "ranking.js"), "utf8");
+  const css = await readFile(join("site", "styles.css"), "utf8");
+  assert.match(map, /class="skip-link"/);
+  assert.match(map, /id="archiveStatus" role="status" aria-live="polite"/);
+  assert.match(map, /id="retryArchive" hidden/);
+  assert.match(app, /initialArchiveState\(\)/);
+  assert.match(app, /transitionArchive/);
+  assert.match(app, /VERIFIED STATIC STATES \/ OFFLINE ARCHIVE/);
+  assert.match(account, /id="accountMain" aria-busy="true"/);
+  assert.match(account, /id="operationStatus"[^>]*role="status"/);
+  assert.match(accountJS, /transitionAccount/);
+  assert.match(accountJS, /accountState\.phase === "busy"/);
+  assert.match(rankingJS, /kind === "integrity"/);
+  assert.match(css, /prefers-contrast:more/);
+  assert.match(css, /archive-status-row/);
 });
