@@ -25,7 +25,8 @@ await walk(root);
 const blocked = files.filter((path) => forbidden.some((pattern) => pattern.test(path)));
 if (blocked.length > 0) throw new Error("unsafe files in public bundle: " + blocked.join(", "));
 for (const mandatory of ["index.html", "account.html", "ranking.html",
-  "policy.html", "_worker.js", "engine.js", "daily.js"]) {
+  "policy.html", "_worker.js", "engine.js", "daily.js",
+  "ui-state.js", "ranking-aggregate.js"]) {
   if (!files.includes(mandatory)) throw new Error("missing public asset: " + mandatory);
 }
 const worker = await stat(join(root, "_worker.js"));
