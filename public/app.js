@@ -1,6 +1,7 @@
 import { advanceOneDay, normalizeGlyph } from "./engine.js";
 import { demoSeed } from "./demo-data.js";
-import { loadPublishedArchive } from "./archive.js";
+import { loadPublishedArchive, ArchiveError } from "./archive.js";
+import { initialArchiveState, transitionArchive } from "./ui-state.js";
 import { buildDailySnapshot } from "./daily.js";
 import { nextIsoDay } from "./calendar.js";
 
@@ -22,7 +23,8 @@ const steps = 12;
 let snapshots = [];
 let demoSnapshots = [];
 let archivedSnapshots = null;
-let liveMode = false;
+let archiveState = initialArchiveState();
+const viewingArchive = () => archiveState.view === "archive";
 let frameIndex = 0;
 let selected = { x: 0, y: 0 };
 let viewX = 0;
@@ -72,7 +74,7 @@ function buildHistory() {
     snapshots.push(updated);
   }
   demoSnapshots = snapshots;
-  if (liveMode && archivedSnapshots !== null) snapshots = archivedSnapshots;
+  if (viewingArchive() && archivedSnapshots !== null) snapshots = archivedSnapshots;
   byId("dayRange").max = String(snapshots.length - 1);
   frameIndex = clamp(frameIndex, 0, snapshots.length - 1);
 }
@@ -335,7 +337,9 @@ byId("modelSelect").addEventListener("change", (event) => {
   const selected = event.currentTarget.value;
   if (!Object.hasOwn(modelRules, selected)) return;
   stopPlayback();
-  if (liveMode) activateDemo();
+  if (viewingArchive()) activateDemo();
+  else archiveState = transitionArchive(archiveState, { type: "SHOW_DEMO" });
+  updateArchiveStatus();
   selectedModel = selected;
   frameIndex = 0;
   buildHistory();
@@ -436,7 +440,9 @@ byId("previewForm").addEventListener("submit", (event) => {
       throw new RangeError("座標は地図内の整数で指定してください。");
     }
     if (![1, 3, 5, 7].includes(n)) throw new RangeError("勢力値が不正です。");
-    if (liveMode) activateDemo();
+    if (viewingArchive()) activateDemo();
+    else archiveState = transitionArchive(archiveState, { type: "SHOW_DEMO" });
+    updateArchiveStatus();
     previewPost = {
       userId: "local-preview-user", revision: 1,
       date: nextIsoDay(seed.date), x, y, char,
@@ -459,7 +465,9 @@ byId("previewForm").addEventListener("submit", (event) => {
 });
 byId("resetPreview").addEventListener("click", () => {
   stopPlayback();
-  if (liveMode) activateDemo();
+  if (viewingArchive()) activateDemo();
+  else archiveState = transitionArchive(archiveState, { type: "SHOW_DEMO" });
+  updateArchiveStatus();
   previewPost = null;
   previewStrength = 1;
   frameIndex = 0;
@@ -493,21 +501,45 @@ updatePanels();
  * the deterministic sandbox. Public snapshots contain only coordinates/char/N.
  * No authentication data is fetched by the map itself.
  */
+function updateArchiveStatus() {
+  const status = byId("archiveStatus");
+  const retry = byId("retryArchive");
+  const messages = {
+    loading: "日次確定履歴を確認中です。表示中のデモは保存されません。",
+    empty: "確定済みの履歴はまだありません。現在は保存されないデモを表示しています。",
+    error: archiveState.problem === "integrity"
+      ? "履歴データの整合性検証に失敗しました。検証されていない履歴は表示せず、保存されないデモを表示しています。"
+      : "履歴の取得に失敗しました。現在は保存されないデモを表示しています。",
+    ready: viewingArchive()
+      ? "検証済みの日次確定履歴を表示中です。こちらはデモ投稿では変更されません。"
+      : "履歴データを検証しました。現在は保存されないデモを表示しています。",
+  };
+  status.textContent = messages[archiveState.phase];
+  status.dataset.phase = archiveState.phase;
+  retry.hidden = archiveState.phase !== "error" && archiveState.phase !== "empty";
+  const toggle = document.getElementById("toggleArchive");
+  if (toggle) {
+    toggle.setAttribute("aria-pressed", String(viewingArchive()));
+    toggle.disabled = archiveState.phase !== "ready";
+  }
+}
 function activateDemo() {
   stopPlayback();
-  liveMode = false;
+  archiveState = transitionArchive(archiveState, { type: "SHOW_DEMO" });
   snapshots = demoSnapshots;
   frameIndex = 0;
   byId("dayRange").max = String(snapshots.length - 1);
   const toggle = document.getElementById("toggleArchive");
   if (toggle) toggle.textContent = "確定済み履歴を見る";
   document.querySelector(".panel-label").textContent = "SIMULATION / LOCAL DEMO";
+  updateArchiveStatus();
   updatePanels();
 }
 function activateArchive() {
-  if (!archivedSnapshots || archivedSnapshots.length === 0) return;
+  if (!archivedSnapshots || archivedSnapshots.length === 0 ||
+      archiveState.phase !== "ready") return;
   stopPlayback();
-  liveMode = true;
+  archiveState = transitionArchive(archiveState, { type: "SHOW_ARCHIVE" });
   snapshots = archivedSnapshots;
   frameIndex = snapshots.length - 1;
   byId("dayRange").max = String(snapshots.length - 1);
@@ -516,26 +548,45 @@ function activateArchive() {
   document.querySelector(".panel-label").textContent = "VERIFIED DAILY STATES / DEVELOPMENT DATABASE";
   byId("previewMessage").textContent =
     "日次確定済みの地図履歴を閲覧中です。仮投稿するとデモ表示へ戻ります。";
+  updateArchiveStatus();
   updatePanels();
 }
 async function findPublishedArchive() {
   try {
     const archive = await loadPublishedArchive({ limit: 21 });
     archivedSnapshots = archive.states;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.id = "toggleArchive";
+    archiveState = transitionArchive(archiveState, { type: "READY" });
+    let button = document.getElementById("toggleArchive");
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.id = "toggleArchive";
+      button.addEventListener("click", () => {
+        if (viewingArchive()) activateDemo();
+        else activateArchive();
+      });
+      document.querySelector(".map-toolbar").append(button);
+    }
     button.textContent = archive.source === "api"
       ? "確定済み履歴を見る" : "静的履歴を見る";
-    button.addEventListener("click", () => {
-      if (liveMode) activateDemo();
-      else activateArchive();
-    });
-    document.querySelector(".map-toolbar").append(button);
-    // A real published archive takes priority over synthetic demo data.
-    activateArchive();
-  } catch {
-    // Static demo has no published archive: keep the synthetic time line.
+    // Only auto-select a verified archive if the user has not explicitly
+    // chosen to edit or inspect the demo while the request was pending.
+    if (viewingArchive()) activateArchive();
+    else updateArchiveStatus();
+  } catch (error) {
+    archiveState = transitionArchive(archiveState,
+      error instanceof ArchiveError && error.kind === "empty"
+        ? { type: "EMPTY" }
+        : { type: "ERROR", problem: error instanceof ArchiveError
+          ? error.kind : "integrity" });
+    updateArchiveStatus();
   }
 }
+byId("retryArchive").addEventListener("click", () => {
+  if (archiveState.phase !== "error" && archiveState.phase !== "empty") return;
+  archiveState = transitionArchive(archiveState, { type: "LOAD" });
+  updateArchiveStatus();
+  void findPublishedArchive();
+});
+updateArchiveStatus();
 void findPublishedArchive();
