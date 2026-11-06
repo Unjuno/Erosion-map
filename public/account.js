@@ -1,7 +1,8 @@
-/** Browser-native WebAuthn. This page only works against the authenticated API. */
+/** Browser-native WebAuthn. The backend remains the auth authority. */
+import { initialAccountState, transitionAccount } from "./ui-state.js";
+
 const id = (name) => document.getElementById(name);
-let backendAvailable = false;
-let activeUser = false;
+let accountState = initialAccountState();
 
 function fromBase64url(base64url) {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
@@ -73,24 +74,34 @@ async function api(path, data) {
 function setMessage(target, value) {
   id(target).textContent = value;
 }
+const supportsCredentials = () =>
+  typeof PublicKeyCredential !== "undefined" &&
+  typeof navigator.credentials?.get === "function";
 function enableButtons() {
-  const supportsWebAuthn = typeof PublicKeyCredential !== "undefined" &&
+  const phase = accountState.phase;
+  const signedIn = phase === "authenticated";
+  const signedOut = phase === "anonymous";
+  const supportsRegistration = supportsCredentials() &&
     typeof navigator.credentials?.create === "function";
-  id("registerButton").disabled = !backendAvailable || !supportsWebAuthn;
-  id("loginButton").disabled = !backendAvailable || !supportsWebAuthn;
-  id("logoutButton").disabled = !backendAvailable || !activeUser;
-  id("realSubmit").disabled = !backendAvailable || !activeUser;
-  id("deleteAccountButton").disabled = !backendAvailable || !activeUser ||
-    typeof navigator.credentials?.get !== "function";
+  id("registerButton").disabled = !(signedIn || signedOut) || !supportsRegistration;
+  id("loginButton").disabled = !signedOut || !supportsCredentials();
+  id("logoutButton").disabled = !signedIn;
+  id("realSubmit").disabled = !signedIn;
+  id("deleteAccountButton").disabled = !signedIn || !supportsCredentials();
+  id("accountMain").setAttribute("aria-busy", String(phase === "busy"));
+  id("operationStatus").textContent = phase === "busy"
+    ? "処理中：ほかの操作は完了まで受け付けません。" : "";
 }
 async function refresh() {
+  let available = false;
+  let authenticated = false;
   try {
     const status = await api("/api/status");
-    backendAvailable = true;
     const state = await api("/api/me");
-    activeUser = state.authenticated;
-    id("authState").textContent = state.authenticated ? "ログイン済み" : "未ログイン";
-    id("keyCount").textContent = state.authenticated ? String(state.credentialCount) : "—";
+    available = true;
+    authenticated = state.authenticated === true;
+    id("authState").textContent = authenticated ? "ログイン済み" : "未ログイン";
+    id("keyCount").textContent = authenticated ? String(state.credentialCount) : "—";
     id("postingDay").textContent = state.day;
     id("currentPost").textContent = state.post
       ? state.post.char + " (" + state.post.x + "," + state.post.y +
@@ -100,25 +111,48 @@ async function refresh() {
       ? "Sites互換のD1バックエンドに接続中です。保存先を確認してください。この表示だけではサイトが一般公開済みとは判断できません。"
       : "ローカル開発用SQLiteバックエンドに接続中です。正式公開環境ではありません。";
   } catch {
-    backendAvailable = false;
-    activeUser = false;
     id("authState").textContent = "バックエンド未接続";
+    id("keyCount").textContent = "—";
+    id("postingDay").textContent = "—";
+    id("currentPost").textContent = "—";
     id("environmentNotice").textContent =
-      "静的デモでは実際のパスキー登録・ログイン・投稿保存はできません。開発用バックエンドで開いてください。";
+      "バックエンドに接続できません。静的デモではパスキー登録・ログイン・投稿保存はできません。";
+  }
+  accountState = transitionAccount(accountState, {
+    type: accountState.phase === "busy" ? "SETTLED" : "SYNC",
+    available, authenticated,
+  });
+  enableButtons();
+  return available;
+}
+async function act(target, operation, work) {
+  // Busy is not merely a visual indication: overlapping async passkey
+  // ceremonies can overwrite the single challenge cookie in the browser.
+  if (accountState.phase === "busy") return;
+  try {
+    accountState = transitionAccount(accountState, { type: "BEGIN", operation });
+  } catch {
+    return;
   }
   enableButtons();
-}
-async function act(target, work) {
   setMessage(target, "処理中…");
   try {
     await work();
-    await refresh();
-    setMessage(target, "処理が完了しました。");
+    const verified = await refresh();
+    setMessage(target, verified
+      ? "処理が完了しました。" : "処理の結果を確認できません。再接続して状態を確認してください。");
   } catch (error) {
+    if (accountState.phase === "busy") {
+      accountState = transitionAccount(accountState, { type: "FAILED" });
+      enableButtons();
+    }
+    // The server remains authoritative. Revalidate session state after an
+    // interrupted operation, without hiding the original error message.
+    await refresh();
     setMessage(target, error instanceof Error ? error.message : "処理に失敗しました。");
   }
 }
-id("registerButton").addEventListener("click", () => act("authMessage", async () => {
+id("registerButton").addEventListener("click", () => act("authMessage", "register", async () => {
   const start = await api("/api/auth/register/start", {});
   const credential = await navigator.credentials.create({
     publicKey: registrationOptions(start.options),
@@ -126,7 +160,7 @@ id("registerButton").addEventListener("click", () => act("authMessage", async ()
   if (!credential) throw new Error("パスキー作成がキャンセルされました。");
   await api("/api/auth/register/finish", { credential: registrationJSON(credential) });
 }));
-id("loginButton").addEventListener("click", () => act("authMessage", async () => {
+id("loginButton").addEventListener("click", () => act("authMessage", "login", async () => {
   const start = await api("/api/auth/login/start", {});
   const credential = await navigator.credentials.get({
     publicKey: authenticationOptions(start.options),
@@ -134,12 +168,12 @@ id("loginButton").addEventListener("click", () => act("authMessage", async () =>
   if (!credential) throw new Error("パスキー認証がキャンセルされました。");
   await api("/api/auth/login/finish", { credential: authenticationJSON(credential) });
 }));
-id("logoutButton").addEventListener("click", () => act("authMessage", async () => {
+id("logoutButton").addEventListener("click", () => act("authMessage", "logout", async () => {
   await api("/api/auth/logout", {});
 }));
 id("realPostForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  act("postMessage", async () => {
+  act("postMessage", "post", async () => {
     await api("/api/post", {
       x: Number(id("realX").value),
       y: Number(id("realY").value),
@@ -155,7 +189,7 @@ id("deleteAccountButton").addEventListener("click", async () => {
     setMessage("deleteMessage", "削除を取り消しました。");
     return;
   }
-  await act("deleteMessage", async () => {
+  await act("deleteMessage", "delete", async () => {
     const start = await api("/api/account/delete/start", {});
     const assertion = await navigator.credentials.get({
       publicKey: authenticationOptions(start.options),
