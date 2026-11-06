@@ -1,7 +1,7 @@
 import { advanceOneDay } from "./engine.js";
 import { nextIsoDay } from "./calendar.js";
 import { demoSeed } from "./demo-data.js";
-import { loadPublishedArchive } from "./archive.js";
+import { loadPublishedArchive, ArchiveError } from "./archive.js";
 
 const id = (key) => document.getElementById(key);
 const countText = (number) => Number(number).toLocaleString("ja-JP");
@@ -92,8 +92,28 @@ async function setup() {
     states = archive.states;
     source = archive.source === "api"
       ? "DBの日次確定スナップショット" : "保存された静的スナップショット";
-  } catch {
-    states = fakeHistory();
+  } catch (error) {
+    if (error instanceof ArchiveError && error.kind === "empty") {
+      states = fakeHistory();
+      source = "合成デモ（保存なし）";
+    } else {
+      // An available API with broken hashes or an unexpected transport
+      // error is NOT equivalent to there being no archive. Do not fabricate
+      // ranks that could be mistaken for persisted user contributions.
+      selectedSnapshots = [];
+      entries = [];
+      id("rankingDate").textContent = "表示日: —";
+      id("historyDays").textContent = "0 日";
+      id("totalFactions").textContent = "0";
+      id("totalOccupied").textContent = "0";
+      message.setAttribute("role", "alert");
+      message.textContent = error instanceof ArchiveError &&
+        error.kind === "integrity"
+        ? "履歴データの整合性を検証できません。ランキングの表示を中止しました。"
+        : "履歴データを取得できません。デモ順位には置き換えず、表示を中止しました。";
+      drawRanking();
+      return;
+    }
   }
   selectedSnapshots = states;
   entries = calcRanking(states);
