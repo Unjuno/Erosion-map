@@ -176,11 +176,14 @@ async function verifiedArchive({
   try {
     return await load(fetcher, cryptoProvider, limit, "static", onSnapshot);
   } catch (error) {
-    if (error instanceof ArchiveError && error.kind === "absent") {
-      throw new ArchiveError("empty", "no finalized daily archive exists yet", error);
+    if (error instanceof ArchiveError) {
+      if (error.kind === "absent") {
+        throw new ArchiveError("empty", "no finalized daily archive exists yet", error);
+      }
+      throw error; // static integrity/transport problems are terminal too
     }
-    throw new AggregateError([firstFailure, error],
-      "neither API nor static archive could be verified");
+    throw new ArchiveError("integrity",
+      "the static archive could not be verified after the API was absent", error);
   }
 }
 
