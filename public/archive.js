@@ -161,7 +161,6 @@ async function verifiedArchive({
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 30) {
     throw new RangeError("archive limit must be 1..30");
   }
-  let firstFailure;
   try {
     return await load(fetcher, cryptoProvider, limit, "api", onSnapshot);
   } catch (error) {
@@ -171,7 +170,6 @@ async function verifiedArchive({
     if (!(error instanceof ArchiveError) || error.kind !== "absent") {
       throw error;
     }
-    firstFailure = error;
   }
   try {
     return await load(fetcher, cryptoProvider, limit, "static", onSnapshot);
