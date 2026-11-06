@@ -127,3 +127,38 @@ footer{display:flex;justify-content:space-between;gap:16px;border-top:1px solid 
 .rule-selector{display:flex;gap:8px;align-items:center;color:#acbec5;font-size:10px}
 .rule-selector select{max-width:230px;background:#101e28;border:1px solid #40515b;color:var(--text);height:32px;padding:0 7px;font-size:11px}
 @media(max-width:590px){.rule-selector{order:3;width:100%}.rule-selector select{flex:1;max-width:none}}
+
+/* Verified history states are distinct from the unpersisted sandbox.
+   Never use the same visual treatment for a failed checksum and a demo. */
+.skip-link{position:absolute;left:16px;top:-120px;z-index:100;padding:10px 15px;background:var(--accent);color:#12201a;border-radius:4px;font-weight:700}
+.skip-link:focus{top:12px}
+.archive-status-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:13px;padding:13px 18px;border-top:1px solid var(--line);background:#15222b}
+.archive-status-label{font-size:10px;letter-spacing:.15em;color:var(--mint);font-weight:700}
+.archive-status-row p{margin:0;color:#b4cbd0;font-size:12px;line-height:1.6}
+.archive-status-row p[data-phase="loading"]{color:#a2b4bf}
+.archive-status-row p[data-phase="empty"]{color:#c9c5ae}
+.archive-status-row p[data-phase="error"]{color:#efb7a8}
+.archive-status-row p[data-phase="ready"]{color:#c6e0d2}
+.archive-status-row button{height:36px;min-width:112px;padding:0 12px;background:transparent;border:1px solid #68828b;color:var(--text);font-size:12px}
+.archive-status-row button:hover{border-color:var(--accent);color:var(--accent)}
+.archive-status-row button[hidden]{display:none}
+#toggleArchive[aria-pressed="true"]{background:#324739;color:#d9f2bf;border-color:#8ba978}
+#toggleArchive[aria-pressed="false"]{background:transparent}
+@media(max-width:890px){
+  .archive-status-row{grid-template-columns:minmax(0,1fr) auto;gap:8px}
+  .archive-status-label{grid-column:1/-1}
+}
+@media(max-width:590px){
+  .archive-status-row{padding:12px}
+  .archive-status-row p{font-size:12px}
+  .archive-status-row button{min-width:90px}
+  .top-links{flex-wrap:wrap;justify-content:flex-start;row-gap:10px;column-gap:17px}
+  .top-links a{font-size:11px;white-space:nowrap;padding:4px 0}
+  .map-toolbar button,.timeline button{height:40px;min-width:40px}
+  .rule-selector select{height:40px}
+  .coordinate-form input{height:40px}
+}
+@media(prefers-contrast:more){
+  .archive-status-row{border:2px solid var(--line)}
+  .archive-status-row p[data-phase="error"]{color:#ffd8c9}
+}
