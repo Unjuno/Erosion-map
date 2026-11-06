@@ -23,6 +23,7 @@ const steps = 12;
 let snapshots = [];
 let demoSnapshots = [];
 let archivedSnapshots = null;
+let archivedSource = null;
 let archiveState = initialArchiveState();
 const viewingArchive = () => archiveState.view === "archive";
 let frameIndex = 0;
@@ -511,7 +512,9 @@ function updateArchiveStatus() {
       ? "履歴データの整合性検証に失敗しました。検証されていない履歴は表示せず、保存されないデモを表示しています。"
       : "履歴の取得に失敗しました。現在は保存されないデモを表示しています。",
     ready: viewingArchive()
-      ? "検証済みの日次確定履歴を表示中です。こちらはデモ投稿では変更されません。"
+      ? (archivedSource === "static"
+        ? "SHA-256検証済みの静的履歴を表示中です。DBの稼働を示すものではありません。"
+        : "DB由来の検証済み日次履歴を表示中です。デモ投稿では変更されません。")
       : "履歴データを検証しました。現在は保存されないデモを表示しています。",
   };
   status.textContent = messages[archiveState.phase];
@@ -530,7 +533,8 @@ function activateDemo() {
   frameIndex = 0;
   byId("dayRange").max = String(snapshots.length - 1);
   const toggle = document.getElementById("toggleArchive");
-  if (toggle) toggle.textContent = "確定済み履歴を見る";
+  if (toggle) toggle.textContent = archivedSource === "static"
+    ? "静的履歴を見る" : "確定済み履歴を見る";
   document.querySelector(".panel-label").textContent = "SIMULATION / LOCAL DEMO";
   updateArchiveStatus();
   updatePanels();
@@ -545,7 +549,9 @@ function activateArchive() {
   byId("dayRange").max = String(snapshots.length - 1);
   const toggle = document.getElementById("toggleArchive");
   if (toggle) toggle.textContent = "デモに戻る";
-  document.querySelector(".panel-label").textContent = "VERIFIED DAILY STATES / DEVELOPMENT DATABASE";
+  document.querySelector(".panel-label").textContent = archivedSource === "static"
+    ? "VERIFIED STATIC STATES / OFFLINE ARCHIVE"
+    : "VERIFIED DAILY STATES / DEVELOPMENT DATABASE";
   byId("previewMessage").textContent =
     "日次確定済みの地図履歴を閲覧中です。仮投稿するとデモ表示へ戻ります。";
   updateArchiveStatus();
@@ -555,6 +561,7 @@ async function findPublishedArchive() {
   try {
     const archive = await loadPublishedArchive({ limit: 21 });
     archivedSnapshots = archive.states;
+    archivedSource = archive.source;
     archiveState = transitionArchive(archiveState, { type: "READY" });
     let button = document.getElementById("toggleArchive");
     if (!button) {
