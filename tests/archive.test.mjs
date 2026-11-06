@@ -13,14 +13,15 @@ const data=snapshots.map(state=>({state,raw:JSON.stringify(state)}));
 const index=data.map(item=>({date:item.state.date,sha256:sha(item.raw)}));
 const jsonResponse=body=>new Response(body,{status:200,headers:{"content-type":"application/json"}});
 const notFound=()=>new Response("missing",{status:404});
-const fakeFetch=({tamper=false,api=false}={})=>async(url)=>{
+const fakeFetch=({tamper=false,api=false,apiHashOnly=false,apiStatus=200}={})=>async(url)=>{
+  if(url.includes("/api/history") && apiStatus !== 200) return new Response("unavailable", {status:apiStatus});
   if(url.includes("/api/history")) return api?jsonResponse(JSON.stringify({
     days:index.map(x=>({day:x.date,sha256:x.sha256})).reverse(),
   })):notFound();
   if(url.includes("/api/state?date=")){
     const i=index.findIndex(r=>url.includes(r.date));
     return i<0?notFound():jsonResponse(JSON.stringify({
-      state:snapshots[i],sha256:tamper?"0".repeat(64):index[i].sha256,
+      state:snapshots[i],sha256:(tamper||apiHashOnly)?"0".repeat(64):index[i].sha256,
     }));
   }
   if(url.includes("/data/index.json"))return jsonResponse(JSON.stringify(index));
@@ -57,4 +58,25 @@ test("an insecure origin cannot bypass mandatory WebCrypto verification",async()
   await assert.rejects(loadPublishedArchive({
     fetcher:fakeFetch(),cryptoProvider:{},limit:2,
   }),/neither API nor static archive/);
+});
+
+
+test("a corrupted API snapshot must not silently fall back to a valid static archive", async () => {
+  await assert.rejects(
+    () => loadPublishedArchive({
+      fetcher:fakeFetch({api:true,apiHashOnly:true}),
+      cryptoProvider:webcrypto,limit:2,
+    }),
+    /hash|integrity|checksum/i,
+    "a successful API history response is authoritative, not a hint to load static data"
+  );
+});
+
+test("an API infrastructure failure must not be disguised as verified static data", async () => {
+  await assert.rejects(
+    () => loadPublishedArchive({
+      fetcher:fakeFetch({apiStatus:503}),cryptoProvider:webcrypto,limit:2,
+    }),
+    /unavailable|503|service|archive/i
+  );
 });
