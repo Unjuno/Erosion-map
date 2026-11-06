@@ -78,21 +78,44 @@ async function computeDigest(raw, webCrypto) {
     .map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 async function fetchState(fetcher, url, record, cryptoProvider, wrapped) {
-  const response = await fetcher(url, { credentials: "same-origin", cache: "no-store" });
-  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-    throw new Error("snapshot file is unavailable");
+  let response;
+  try {
+    response = await fetcher(url, { credentials: "same-origin", cache: "no-store" });
+  } catch (cause) {
+    throw new ArchiveError("transport", "snapshot request failed", cause);
   }
-  const raw = await response.text();
-  const payload = JSON.parse(raw);
-  const state = wrapped ? payload.state : payload;
-  validateSnapshot(state, record.date);
+  if (!response.ok) {
+    throw new ArchiveError(response.status === 404 ? "integrity" : "transport",
+      "snapshot endpoint failed for " + record.date + ": HTTP " + response.status);
+  }
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    throw new ArchiveError("integrity", "snapshot endpoint returned non-JSON data");
+  }
+  let payload;
+  let raw;
+  try {
+    raw = await response.text();
+    payload = JSON.parse(raw);
+  } catch (cause) {
+    throw new ArchiveError("integrity", "snapshot contains malformed JSON", cause);
+  }
+  const state = wrapped ? payload?.state : payload;
+  try { validateSnapshot(state, record.date); }
+  catch (cause) {
+    throw new ArchiveError("integrity", "invalid published snapshot structure", cause);
+  }
   const source = wrapped ? JSON.stringify(state) : raw;
   const expected = record.sha256;
   if (wrapped && payload.sha256 !== expected) {
-    throw new Error("API hash disagrees with history index");
+    throw new ArchiveError("integrity", "API hash disagrees with history index");
   }
-  if (await computeDigest(source, cryptoProvider) !== expected) {
-    throw new Error("snapshot SHA-256 mismatch for " + record.date);
+  let actual;
+  try { actual = await computeDigest(source, cryptoProvider); }
+  catch (cause) {
+    throw new ArchiveError("environment", "snapshot verification could not run", cause);
+  }
+  if (actual !== expected) {
+    throw new ArchiveError("integrity", "snapshot SHA-256 mismatch for " + record.date);
   }
   return state;
 }
