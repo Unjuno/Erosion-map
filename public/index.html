@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#map">地図へスキップ</a>
   <div class="app-shell">
     <header class="topbar">
       <a class="identity" href="./" aria-label="Erosion Map ホーム">
@@ -77,6 +78,12 @@
                 <input id="goY" name="y" type="number" value="0" step="1" required>
                 <button type="submit">移動 ↗</button>
               </form>
+            </div>
+
+            <div class="archive-status-row" aria-label="地図データの状態">
+              <span class="archive-status-label">DATA SOURCE</span>
+              <p id="archiveStatus" role="status" aria-live="polite" data-phase="loading">日次確定履歴を確認中です。表示中のデモは保存されません。</p>
+              <button type="button" id="retryArchive" hidden>履歴を再確認</button>
             </div>
 
             <div class="canvas-frame">
