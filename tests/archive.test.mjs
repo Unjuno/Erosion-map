@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
-import { loadPublishedArchive } from "../site/archive.js";
+import { loadPublishedArchive, visitPublishedArchive, ArchiveError } from "../site/archive.js";
 
 const b={minX:-250,maxX:249,minY:-250,maxY:249};
 const snapshots=[
@@ -79,4 +79,30 @@ test("an API infrastructure failure must not be disguised as verified static dat
     }),
     /unavailable|503|service|archive/i
   );
+});
+
+test("verified archive visitor streams states in order without retaining all maps", async () => {
+  const seen = [];
+  const result = await visitPublishedArchive({
+    fetcher: fakeFetch({ api: true }), cryptoProvider: webcrypto, limit: 2,
+    onSnapshot: (state) => { seen.push(state.date); },
+  });
+  assert.deepEqual(seen, ["2026-10-20", "2026-10-21"]);
+  assert.equal(result.source, "api");
+  assert.equal(result.loadedDays, 2);
+  assert.deepEqual(result.states, [],
+    "streaming ranking consumer must not receive a retained history array");
+});
+
+test("absent archives are distinguishable from verified API integrity failures", async () => {
+  await assert.rejects(() => loadPublishedArchive({
+    fetcher: fakeFetch({ api: false }), cryptoProvider: webcrypto,
+  }), error => error instanceof ArchiveError && error.kind === "empty");
+  await assert.rejects(() => loadPublishedArchive({
+    fetcher: fakeFetch({ api: true, apiHashOnly: true }), cryptoProvider: webcrypto,
+  }), /hash|integrity/i);
+  await assert.rejects(() => visitPublishedArchive({
+    fetcher: fakeFetch({ apiStatus: 503 }), cryptoProvider: webcrypto,
+    onSnapshot: () => {},
+  }), error => error instanceof ArchiveError && error.kind === "transport");
 });
