@@ -51,13 +51,13 @@ test("static archive loads when API is absent, keeping correct date order",async
 test("altered JSON or mismatched API hash cannot masquerade as published state",async()=>{
   await assert.rejects(loadPublishedArchive({
     fetcher:fakeFetch({tamper:true}),cryptoProvider:webcrypto,limit:2,
-  }),/neither API nor static archive/);
+  }),/SHA-256|hash|integrity/);
 });
 
 test("an insecure origin cannot bypass mandatory WebCrypto verification",async()=>{
   await assert.rejects(loadPublishedArchive({
     fetcher:fakeFetch(),cryptoProvider:{},limit:2,
-  }),/neither API nor static archive/);
+  }),/verification|Web Crypto|secure/);
 });
 
 
