@@ -13,7 +13,7 @@ const data=snapshots.map(state=>({state,raw:JSON.stringify(state)}));
 const index=data.map(item=>({date:item.state.date,sha256:sha(item.raw)}));
 const jsonResponse=body=>new Response(body,{status:200,headers:{"content-type":"application/json"}});
 const notFound=()=>new Response("missing",{status:404});
-const fakeFetch=({tamper=false,api=false,apiHashOnly=false,apiStatus=200}={})=>async(url)=>{
+const fakeFetch=({tamper=false,api=false,apiHashOnly=false,apiStatus=200,staticMissing=false}={})=>async(url)=>{
   if(url.includes("/api/history") && apiStatus !== 200) return new Response("unavailable", {status:apiStatus});
   if(url.includes("/api/history")) return api?jsonResponse(JSON.stringify({
     days:index.map(x=>({day:x.date,sha256:x.sha256})).reverse(),
@@ -24,7 +24,7 @@ const fakeFetch=({tamper=false,api=false,apiHashOnly=false,apiStatus=200}={})=>a
       state:snapshots[i],sha256:(tamper||apiHashOnly)?"0".repeat(64):index[i].sha256,
     }));
   }
-  if(url.includes("/data/index.json"))return jsonResponse(JSON.stringify(index));
+  if(url.includes("/data/index.json"))return staticMissing?notFound():jsonResponse(JSON.stringify(index));
   if(url.includes("state-")){
     const i=index.findIndex(r=>url.includes(r.date));
     return i<0?notFound():jsonResponse(tamper?data[i].raw+" ":data[i].raw);
@@ -96,7 +96,7 @@ test("verified archive visitor streams states in order without retaining all map
 
 test("absent archives are distinguishable from verified API integrity failures", async () => {
   await assert.rejects(() => loadPublishedArchive({
-    fetcher: fakeFetch({ api: false }), cryptoProvider: webcrypto,
+    fetcher: fakeFetch({ api: false, staticMissing: true }), cryptoProvider: webcrypto,
   }), error => error instanceof ArchiveError && error.kind === "empty");
   await assert.rejects(() => loadPublishedArchive({
     fetcher: fakeFetch({ api: true, apiHashOnly: true }), cryptoProvider: webcrypto,
