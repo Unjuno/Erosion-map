@@ -21,3 +21,15 @@
 .danger-button{border:1px solid #986b6e;background:#38252b;color:#fff0ee;min-height:42px;padding:0 16px;font-size:12px;cursor:pointer}
 .danger-button:not(:disabled):hover{background:#56343a}
 .danger-button:disabled{opacity:.5;cursor:not-allowed}
+
+.account-workflow{max-width:900px;margin:20px 0 0;padding:16px 18px;border:1px solid var(--line);background:var(--surface2);color:#bbd0d2;font-size:12px;line-height:1.9}
+.account-workflow strong{color:var(--text);font-weight:650}
+.account-operation-status{font-size:12px;color:var(--accent);line-height:1.6;min-height:20px;margin:12px 0 0}
+.account-main[aria-busy="true"] .account-grid{opacity:.85}
+.account-main[aria-busy="true"] .account-operation-status{font-weight:600}
+.account-feedback{overflow-wrap:anywhere}
+.account-actions button,.danger-button{min-height:44px;border-radius:3px}
+@media(max-width:590px){
+  .account-workflow{padding:13px 15px}
+  .account-grid .side-card{padding:20px}
+}
