@@ -16,6 +16,7 @@ import {
 } from "@simplewebauthn/server";
 import { Buffer } from "node:buffer";
 import { D1Store, hashText } from "./d1-store.mjs";
+import { requireChallengePurpose } from "./auth-state.mjs";
 import { dayAtInstant, nextIsoDay } from "../dist/calendar.js";
 
 class RequestError extends Error {
@@ -200,11 +201,15 @@ export async function handleRequest(request, env, context = {}) {
     if (!found) throw new RequestError(401, "passkey login required");
     return found;
   };
-  const consume = async (kind) => {
+  const consume = async (kind, purpose) => {
     if (!challengeToken) throw new RequestError(400, "missing challenge");
     const found = await store.consumeChallenge(await hashText(challengeToken), kind);
     if (!found) throw new RequestError(400, "challenge expired or used");
-    return found;
+    try {
+      return requireChallengePurpose(found, purpose);
+    } catch {
+      throw new RequestError(400, "wrong challenge kind");
+    }
   };
   const mint = async (userId) => {
     if (sessionToken) await store.revokeSession(await hashText(sessionToken));
@@ -345,7 +350,7 @@ export async function handleRequest(request, env, context = {}) {
     }
     if (path === "/api/auth/register/finish" && method === "POST") {
       const payload = await bodyJSON(request);
-      const pending = await consume("register");
+      const pending = await consume("register", "register");
       const existing = await store.hasUser(pending.userId);
       if (existing && (await userSession()) !== pending.userId) {
         throw new RequestError(403, "active session required to add passkey");
@@ -380,8 +385,7 @@ export async function handleRequest(request, env, context = {}) {
     }
     if (path === "/api/auth/login/finish" && method === "POST") {
       const payload = await bodyJSON(request);
-      const pending = await consume("authenticate");
-      if (pending.userId !== null) throw new RequestError(400, "wrong challenge kind");
+      const pending = await consume("authenticate", "login");
       const userId = await verifyAssertion(payload, pending);
       return json(200, { authenticated: true }, [
         invalidateChallenge(), await mint(userId),
@@ -408,7 +412,7 @@ export async function handleRequest(request, env, context = {}) {
       const userId = await requireUser();
       const body = await bodyJSON(request);
       if (body.confirm !== "DELETE") throw new RequestError(400, "confirm deletion");
-      const pending = await consume("authenticate");
+      const pending = await consume("authenticate", "delete");
       if (pending.userId !== userId) throw new RequestError(400, "account mismatch");
       await verifyAssertion(body, pending, userId);
       await store.deleteUser(userId);
