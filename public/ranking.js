@@ -2,6 +2,7 @@ import { advanceOneDay } from "./engine.js";
 import { nextIsoDay } from "./calendar.js";
 import { demoSeed } from "./demo-data.js";
 import { visitPublishedArchive, ArchiveError } from "./archive.js";
+import { createRankingAccumulator } from "./ranking-aggregate.js";
 
 const id = (key) => document.getElementById(key);
 const countText = (number) => Number(number).toLocaleString("ja-JP");
@@ -14,24 +15,6 @@ function fakeHistory() {
     output.push(advanceOneDay(last, nextIsoDay(last.date)));
   }
   return output;
-}
-function calcRanking(states) {
-  const latest = states[states.length - 1];
-  const stats = new Map();
-  for (const cell of latest.cells) {
-    const stat = stats.get(cell.char) ?? { cells: 0, strength: 0, days: 0 };
-    stat.cells++;
-    stat.strength += cell.n;
-    stats.set(cell.char, stat);
-  }
-  for (const snapshot of states) {
-    const chars = new Set(snapshot.cells.map((cell) => cell.char));
-    for (const char of chars) {
-      const stat = stats.get(char);
-      if (stat) stat.days++;
-    }
-  }
-  return [...stats.entries()].map(([char, data]) => ({ char, ...data }));
 }
 function glyphColor(char) {
   const palette = ["#c6f08f", "#ecb67e", "#9cb3ee", "#e29fc2",
@@ -86,51 +69,12 @@ function drawRanking() {
  * Only the latest day's cells and each glyph's occurrence counter are
  * retained. Verified earlier maps can be discarded immediately.
  */
-function rankingAccumulator() {
-  const daysByGlyph = new Map();
-  let latestStats = new Map();
-  let latestDate = null;
-  let latestOccupied = 0;
-  let dayCount = 0;
-  return {
-    accept(state) {
-      if (latestDate !== null && state.date <= latestDate) {
-        throw new RangeError("archive day order is invalid");
-      }
-      const stats = new Map();
-      for (const cell of state.cells) {
-        const item = stats.get(cell.char) ?? { cells: 0, strength: 0 };
-        item.cells++;
-        item.strength += cell.n;
-        if (!Number.isSafeInteger(item.strength)) {
-          throw new RangeError("ranking strength exceeds safe integer range");
-        }
-        stats.set(cell.char, item);
-      }
-      for (const char of stats.keys()) {
-        daysByGlyph.set(char, (daysByGlyph.get(char) ?? 0) + 1);
-      }
-      latestStats = stats;
-      latestDate = state.date;
-      latestOccupied = state.cells.length;
-      dayCount++;
-    },
-    result() {
-      return {
-        date: latestDate, occupied: latestOccupied, days: dayCount,
-        entries: [...latestStats.entries()].map(([char, item]) => ({
-          char, ...item, days: daysByGlyph.get(char) ?? 0,
-        })),
-      };
-    },
-  };
-}
 async function setup() {
   const message = id("rankingStatus");
   let source = "合成デモ（保存なし）";
   let summary;
   try {
-    const counter = rankingAccumulator();
+    const counter = createRankingAccumulator();
     const archive = await visitPublishedArchive({
       limit: 30, onSnapshot: state => counter.accept(state),
     });
@@ -140,11 +84,9 @@ async function setup() {
   } catch (error) {
     if (error instanceof ArchiveError && error.kind === "empty") {
       const states = fakeHistory();
-      const latest = states.at(-1);
-      summary = {
-        entries: calcRanking(states), occupied: latest.cells.length,
-        date: latest.date, days: states.length,
-      };
+      const counter = createRankingAccumulator();
+      for (const snapshot of states) counter.accept(snapshot);
+      summary = counter.result();
     } else {
       // A present API with broken hashes or an unexpected transport
       // error is NOT equivalent to there being no archive. Do not fabricate
