@@ -16,22 +16,24 @@
       <nav class="top-links"><a href="./">MAP</a><a href="./account.html">PASSKEY / POST</a><a href="./ranking.html">RANKING</a><a href="./policy.html">POLICY</a>
         <a href="https://github.com/Unjuno/Erosion-map" target="_blank" rel="noopener noreferrer">SOURCE ↗</a></nav>
     </header>
-    <main class="account-main">
+    <main class="account-main" id="accountMain" aria-busy="true">
       <div class="eyebrow"><span class="small-line"></span> IDENTITY & CONTRIBUTION</div>
       <h1>あなたの一文字を、<br><em>世界へ。</em></h1>
       <p class="account-intro">メールアドレスもパスワードも不要。端末のパスキーで登録・ログインし、1日1文字を投稿します。同じ日の再投稿は更新になります。</p>
       <div class="hero-notice" role="note" id="environmentNotice">
         投稿には稼働中のバックエンドへの接続が必要です。静的デモでは登録・投稿できません。
       </div>
+      <p class="account-workflow" role="note">操作の流れ：<strong>パスキーで登録・ログイン</strong> → <strong>本日の文字・座標を投稿</strong> → <strong>日付境界で確定</strong>。操作中は認証・投稿・退会を同時実行しません。</p>
+      <p id="operationStatus" class="account-operation-status" role="status" aria-live="polite"></p>
       <div class="account-grid">
         <section class="side-card">
           <div class="side-heading"><span>01 / PASSKEY</span><span class="side-mini">WEB AUTHENTICATION</span></div>
           <h2>パスキー認証</h2>
           <p>認証にはWebAuthnを使用します。対応端末で登録・ログインしてください。</p>
           <div class="account-actions">
-            <button id="registerButton" type="button">新規登録 / パスキー追加</button>
-            <button id="loginButton" type="button" class="secondary">パスキーでログイン</button>
-            <button id="logoutButton" type="button" class="secondary">ログアウト</button>
+            <button id="registerButton" type="button" disabled>新規登録 / パスキー追加</button>
+            <button id="loginButton" type="button" class="secondary" disabled>パスキーでログイン</button>
+            <button id="logoutButton" type="button" class="secondary" disabled>ログアウト</button>
           </div>
           <div class="account-state"><span>認証状態</span><strong id="authState">確認中</strong></div>
           <div class="account-state"><span>登録パスキー数</span><strong id="keyCount">—</strong></div>
@@ -47,7 +49,7 @@
               <div><label for="realX">X座標</label><input id="realX" name="x" type="number" required step="1" value="0"></div>
               <div><label for="realY">Y座標</label><input id="realY" name="y" type="number" required step="1" value="0"></div>
             </div>
-            <button id="realSubmit" type="submit" class="submit-preview">この日の投稿を保存 →</button>
+            <button id="realSubmit" type="submit" class="submit-preview" disabled>この日の投稿を保存 →</button>
           </form>
           <p id="postMessage" class="account-feedback" role="status"></p>
           <div class="account-state"><span>投稿対象日 (JST)</span><strong id="postingDay">—</strong></div>
