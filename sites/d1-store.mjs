@@ -8,6 +8,7 @@
 import { buildDailySnapshot } from "../dist/daily.js";
 import { boundsForUserCount, normalizeGlyph } from "../dist/engine.js";
 import { assertIsoDay, dayAtInstant, nextIsoDay } from "../dist/calendar.js";
+import { classifyDay, transitionDay } from "./day-state.mjs";
 
 const encoder = new TextEncoder();
 // D1 limits any single TEXT, BLOB, or table row to 2,000,000 bytes.
@@ -505,10 +506,18 @@ export class D1Store {
     if (x < minX || x > maxX || y < minY || y > maxY) {
       throw new RangeError("post lies outside the active map");
     }
-    if (await this.sealedDay(day) ||
-        await this.first("SELECT 1 AS present FROM snapshots WHERE day=?", day)) {
-      throw new Error("day already published or sealed");
-    }
+    // The two durable row-existence facts define the authoritative
+    // open -> sealed -> published lifecycle. Never infer it from an in-memory
+    // Worker flag or the client's clock.
+    const flags = await this.first(
+      "SELECT " +
+      "EXISTS(SELECT 1 FROM day_closures WHERE day=?) AS sealed," +
+      "EXISTS(SELECT 1 FROM snapshots WHERE day=?) AS published",
+      day, day
+    );
+    transitionDay(classifyDay({
+      sealed: Boolean(flags.sealed), published: Boolean(flags.published),
+    }), "SUBMIT");
     try {
       const row = await this.first(
         "INSERT INTO posts(user_id,day,revision,x,y,char,updated_at) VALUES(?,?,1,?,?,?,?) " +
@@ -601,6 +610,7 @@ export class D1Store {
     );
     const closure = await this.sealedDay(day);
     if (!closure) throw new Error("day closure failed");
+    transitionDay(classifyDay({ sealed: true }), "FINALIZE");
     if (closure.previousHash !== previousHash) {
       throw new Error("day closure refers to a different prior snapshot");
     }
