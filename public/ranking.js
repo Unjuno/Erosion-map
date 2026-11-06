@@ -1,12 +1,11 @@
 import { advanceOneDay } from "./engine.js";
 import { nextIsoDay } from "./calendar.js";
 import { demoSeed } from "./demo-data.js";
-import { loadPublishedArchive, ArchiveError } from "./archive.js";
+import { visitPublishedArchive, ArchiveError } from "./archive.js";
 
 const id = (key) => document.getElementById(key);
 const countText = (number) => Number(number).toLocaleString("ja-JP");
 let entries = [];
-let selectedSnapshots = [];
 
 function fakeHistory() {
   const output = [demoSeed];
@@ -83,24 +82,73 @@ function drawRanking() {
     target.append(tr);
   }
 }
+/**
+ * Only the latest day's cells and each glyph's occurrence counter are
+ * retained. Verified earlier maps can be discarded immediately.
+ */
+function rankingAccumulator() {
+  const daysByGlyph = new Map();
+  let latestStats = new Map();
+  let latestDate = null;
+  let latestOccupied = 0;
+  let dayCount = 0;
+  return {
+    accept(state) {
+      if (latestDate !== null && state.date <= latestDate) {
+        throw new RangeError("archive day order is invalid");
+      }
+      const stats = new Map();
+      for (const cell of state.cells) {
+        const item = stats.get(cell.char) ?? { cells: 0, strength: 0 };
+        item.cells++;
+        item.strength += cell.n;
+        if (!Number.isSafeInteger(item.strength)) {
+          throw new RangeError("ranking strength exceeds safe integer range");
+        }
+        stats.set(cell.char, item);
+      }
+      for (const char of stats.keys()) {
+        daysByGlyph.set(char, (daysByGlyph.get(char) ?? 0) + 1);
+      }
+      latestStats = stats;
+      latestDate = state.date;
+      latestOccupied = state.cells.length;
+      dayCount++;
+    },
+    result() {
+      return {
+        date: latestDate, occupied: latestOccupied, days: dayCount,
+        entries: [...latestStats.entries()].map(([char, item]) => ({
+          char, ...item, days: daysByGlyph.get(char) ?? 0,
+        })),
+      };
+    },
+  };
+}
 async function setup() {
   const message = id("rankingStatus");
-  let source = "合成デモ";
-  let states;
+  let source = "合成デモ（保存なし）";
+  let summary;
   try {
-    const archive = await loadPublishedArchive({ limit: 30 });
-    states = archive.states;
+    const counter = rankingAccumulator();
+    const archive = await visitPublishedArchive({
+      limit: 30, onSnapshot: state => counter.accept(state),
+    });
+    summary = counter.result();
     source = archive.source === "api"
-      ? "DBの日次確定スナップショット" : "保存された静的スナップショット";
+      ? "DBの日次確定スナップショット" : "SHA-256検証済みの静的スナップショット";
   } catch (error) {
     if (error instanceof ArchiveError && error.kind === "empty") {
-      states = fakeHistory();
-      source = "合成デモ（保存なし）";
+      const states = fakeHistory();
+      const latest = states.at(-1);
+      summary = {
+        entries: calcRanking(states), occupied: latest.cells.length,
+        date: latest.date, days: states.length,
+      };
     } else {
-      // An available API with broken hashes or an unexpected transport
+      // A present API with broken hashes or an unexpected transport
       // error is NOT equivalent to there being no archive. Do not fabricate
       // ranks that could be mistaken for persisted user contributions.
-      selectedSnapshots = [];
       entries = [];
       id("rankingDate").textContent = "表示日: —";
       id("historyDays").textContent = "0 日";
@@ -115,13 +163,11 @@ async function setup() {
       return;
     }
   }
-  selectedSnapshots = states;
-  entries = calcRanking(states);
-  const latest = states[states.length - 1];
-  id("rankingDate").textContent = "表示日: " + latest.date;
-  id("historyDays").textContent = countText(states.length) + " 日";
+  entries = summary.entries;
+  id("rankingDate").textContent = "表示日: " + summary.date;
+  id("historyDays").textContent = countText(summary.days) + " 日";
   id("totalFactions").textContent = countText(entries.length);
-  id("totalOccupied").textContent = countText(latest.cells.length);
+  id("totalOccupied").textContent = countText(summary.occupied);
   message.textContent = "データ元：" + source +
     "。表示値は最新スナップショット、出現日数は読み込み済み期間内の集計です。";
   drawRanking();
